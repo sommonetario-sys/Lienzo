@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#2EC4B6">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Lienzo">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<title>Lienzo infinito</title>
+<style>
+:root{
+  --page:#F4F5F2; --card:#FFFFFF; --bar:#FFFFFF; --bar-line:#D6DCD8; --bar-text:#33403B; --muted:#6B7772;
+  --sel:#1D2724; --sel-text:#FFFFFF; --focus:#2453A6; --accent:#2EC4B6; --accent-text:#08302C; --danger:#C2332B;
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  font-family:"Avenir Next","Segoe UI",system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){ --page:#171C1A; --card:#232A27; --bar:#262D2A; --bar-line:#3A4440; --bar-text:#D5DDD9;
+    --muted:#9AA7A1; --sel:#E8EDEA; --sel-text:#1B201E; --focus:#7FA6EE; --danger:#F07C72; }
+}
+:root[data-theme="dark"]{ --page:#171C1A; --card:#232A27; --bar:#262D2A; --bar-line:#3A4440; --bar-text:#D5DDD9;
+  --muted:#9AA7A1; --sel:#E8EDEA; --sel-text:#1B201E; --focus:#7FA6EE; --danger:#F07C72; }
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%;margin:0;overflow:hidden;background:var(--page);overscroll-behavior:none;
+  -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+canvas#cv{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block;cursor:crosshair}
+canvas#cv.panning{cursor:grab}
+.bar{position:fixed;left:50%;transform:translateX(-50%);bottom:0;margin-bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
+  display:flex;align-items:center;gap:4px;background:var(--bar);border:1px solid var(--bar-line);border-radius:18px;padding:6px;
+  max-width:calc(100% - 16px);overflow-x:auto;scrollbar-width:none;color:var(--bar-text);box-shadow:0 6px 24px rgba(20,30,25,.14)}
+.bar::-webkit-scrollbar{display:none}
+.sep{width:1px;align-self:stretch;background:var(--bar-line);margin:4px;flex:none}
+button{appearance:none;border:0;background:transparent;color:inherit;flex:none;width:44px;height:44px;border-radius:12px;
+  display:grid;place-items:center;cursor:pointer;font:inherit;padding:0}
+button:focus-visible,label:focus-within{outline:2px solid var(--focus);outline-offset:2px}
+button[aria-pressed="true"]{background:var(--sel);color:var(--sel-text)}
+button:disabled{opacity:.3;cursor:default}
+svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.sw{width:26px;height:26px;border-radius:50%;background:var(--c);box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}
+.bgsw{width:26px;height:26px;border-radius:7px;background:var(--c);box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}
+.dot{border-radius:50%;background:currentColor}
+.zoom{width:auto;min-width:64px;padding:0 8px;font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.panel{position:fixed;left:50%;transform:translateX(-50%);bottom:0;margin-bottom:calc(env(safe-area-inset-bottom,0px) + 80px);
+  background:var(--bar);color:var(--bar-text);border:1px solid var(--bar-line);border-radius:18px;padding:14px;
+  box-shadow:0 10px 32px rgba(20,30,25,.18);width:min(440px,calc(100% - 16px));display:none;z-index:5}
+.panel.open{display:block}
+.panel h2{font-size:15px;font-weight:600;margin:0 0 10px}
+.grid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
+.grid button{width:100%;aspect-ratio:1;height:auto;border-radius:50%;background:var(--c);box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}
+.grid.square button{border-radius:10px}
+.grid button[aria-pressed="true"]{box-shadow:0 0 0 3px var(--bar),0 0 0 5px var(--sel)}
+.custom{display:flex;align-items:center;gap:10px;margin-top:12px;font-size:14px;cursor:pointer;border-radius:10px;padding:2px}
+.custom .rb{width:36px;height:36px;border-radius:50%;flex:none;position:relative;overflow:hidden;background:conic-gradient(red,#ff0,lime,cyan,blue,#f0f,red)}
+.square + .custom .rb{border-radius:10px}
+.custom input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer;border:0;padding:0}
+.row{display:flex;align-items:center;justify-content:space-between;margin-top:12px;font-size:14px;gap:12px}
+.toggle{width:auto;height:36px;padding:0 12px;border:1px solid var(--bar-line);font-size:14px}
+.action{width:100%;height:auto;min-height:52px;display:flex;align-items:center;gap:12px;text-align:left;padding:10px 12px;
+  border-radius:12px;font-size:15px;line-height:1.3}
+.action:hover{background:color-mix(in srgb,var(--bar-text) 8%,transparent)}
+.action small{display:block;color:var(--muted);font-size:13px}
+.action.danger{color:var(--danger)}
+.hint{position:fixed;top:0;left:50%;transform:translateX(-50%);margin-top:calc(env(safe-area-inset-top,0px) + 14px);
+  background:var(--bar);color:var(--bar-text);border:1px solid var(--bar-line);border-radius:12px;padding:8px 14px;
+  font-size:14px;line-height:1.4;max-width:calc(100% - 32px);text-align:center;transition:opacity .4s;pointer-events:none;z-index:20}
+.hint.off{opacity:0}
+
+/* Galería */
+#gallery{position:fixed;inset:0;z-index:10;background:var(--page);color:var(--bar-text);overflow-y:auto;-webkit-overflow-scrolling:touch;
+  padding:calc(env(safe-area-inset-top,0px) + 24px) 20px calc(env(safe-area-inset-bottom,0px) + 32px)}
+#gallery[hidden]{display:none}
+.gwrap{max-width:1100px;margin:0 auto}
+.ghead{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:20px}
+.ghead h1{font-size:28px;font-weight:700;margin:0;letter-spacing:-.01em}
+.gactions{display:flex;gap:10px;flex-wrap:wrap}
+.btn{width:auto;height:48px;padding:0 18px;border-radius:14px;font-size:16px;font-weight:600;display:inline-flex;gap:8px;align-items:center;
+  border:1px solid var(--bar-line);background:var(--card)}
+.btn.primary{background:var(--accent);color:var(--accent-text);border-color:transparent}
+.note{background:var(--card);border:1px solid var(--bar-line);border-radius:14px;padding:12px 14px;font-size:14px;line-height:1.45;
+  margin-bottom:20px;max-width:70ch}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px}
+.card{background:var(--card);border:1px solid var(--bar-line);border-radius:16px;overflow:hidden;display:flex;flex-direction:column}
+.card .open{width:100%;height:auto;aspect-ratio:4/3;border-radius:0;display:block;background:var(--c,#fff)}
+.card .open img{width:100%;height:100%;object-fit:cover;display:block}
+.card .meta{display:flex;align-items:center;gap:8px;padding:8px 6px 8px 14px}
+.card .meta div{flex:1;min-width:0}
+.card .name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .date{font-size:13px;color:var(--muted)}
+.empty{text-align:center;padding:60px 20px;color:var(--muted);font-size:16px;line-height:1.5}
+.sheet{position:fixed;inset:0;z-index:30;background:rgba(10,15,12,.35);display:none;align-items:flex-end;justify-content:center;
+  padding:0 8px calc(env(safe-area-inset-bottom,0px) + 8px)}
+.sheet.open{display:flex}
+.sheet .box{background:var(--bar);color:var(--bar-text);border-radius:18px;padding:10px;width:min(420px,100%);box-shadow:0 10px 32px rgba(0,0,0,.25)}
+.sheet .title{font-size:15px;font-weight:600;padding:8px 12px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (prefers-reduced-motion:reduce){.hint{transition:none}}
+</style>
+</head>
+<body>
+<!-- Galería -->
+<section id="gallery" aria-label="Mis dibujos">
+  <div class="gwrap">
+    <div class="ghead">
+      <h1>Mis dibujos</h1>
+      <div class="gactions">
+        <button class="btn" id="importBtn">
+          <svg class="i" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"/></svg>Abrir copia</button>
+        <button class="btn primary" id="newBtn">
+          <svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nuevo dibujo</button>
+      </div>
+    </div>
+    <p class="note" id="installNote" hidden>Para que los dibujos no se borren solos, añade esta página a la pantalla de inicio: botón de compartir y luego "Añadir a pantalla de inicio". Ábrela siempre desde ese icono.</p>
+    <div class="cards" id="cards"></div>
+    <div class="empty" id="empty" hidden>Todavía no hay dibujos.<br>Pulsa "Nuevo dibujo" para empezar.</div>
+  </div>
+  <input type="file" id="importFile" accept=".json,application/json" hidden>
+</section>
+
+<div class="sheet" id="cardSheet" role="dialog" aria-modal="true" aria-labelledby="cardSheetTitle">
+  <div class="box">
+    <div class="title" id="cardSheetTitle"></div>
+    <button class="action" id="actRename"><svg class="i" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19z"/></svg>Cambiar nombre</button>
+    <button class="action" id="actBackup"><svg class="i" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
+      <span>Guardar copia editable<small>Para reabrirlo en otra tablet o si se borra la app</small></span></button>
+    <button class="action danger" id="actDelete"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>Borrar dibujo</button>
+    <button class="action" id="actCancel">Cancelar</button>
+  </div>
+</div>
+
+<!-- Editor -->
+<canvas id="cv" aria-label="Lienzo de dibujo"></canvas>
+<div class="hint off" id="hint"></div>
+
+<div class="panel" id="colorPanel" role="dialog" aria-label="Color del trazo">
+  <h2>Color del trazo</h2>
+  <div class="grid" id="inkGrid"></div>
+  <label class="custom"><span class="rb"><input type="color" id="inkCustom" aria-label="Elegir otro color de trazo"></span>Otro color</label>
+</div>
+
+<div class="panel" id="bgPanel" role="dialog" aria-label="Fondo">
+  <h2>Color del fondo</h2>
+  <div class="grid square" id="bgGrid"></div>
+  <label class="custom"><span class="rb"><input type="color" id="bgCustom" aria-label="Elegir otro color de fondo"></span>Otro color</label>
+  <div class="row"><span>Puntos de guía</span><button class="toggle" id="gridToggle" aria-pressed="true">Visibles</button></div>
+</div>
+
+<div class="panel" id="savePanel" role="dialog" aria-label="Guardar">
+  <h2>Guardar</h2>
+  <button class="action" id="saveImage"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 16l5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.5"/></svg>
+    <span>Imagen de lo que se ve<small>Se puede guardar en Fotos o imprimir</small></span></button>
+  <button class="action" id="saveBackup"><svg class="i" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg>
+    <span>Copia editable<small>Para reabrirlo y seguir dibujando</small></span></button>
+</div>
+
+<div class="bar" role="toolbar" aria-label="Herramientas">
+  <button id="backBtn" aria-label="Volver a mis dibujos" title="Mis dibujos">
+    <svg class="i" viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
+  <div class="sep"></div>
+  <button data-tool="pen" aria-pressed="true" aria-label="Lápiz" title="Lápiz (P)">
+    <svg class="i" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg></button>
+  <button data-tool="eraser" aria-pressed="false" aria-label="Borrador" title="Borrador (E)">
+    <svg class="i" viewBox="0 0 24 24"><path d="M8 20h12"/><path d="M5 15l9-9 5 5-8 8H8z"/><path d="M10 10l5 5"/></svg></button>
+  <button data-tool="hand" aria-pressed="false" aria-label="Mover lienzo" title="Mover (H o espacio)">
+    <svg class="i" viewBox="0 0 24 24"><path d="M8 12V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6a1.5 1.5 0 013 0v7c0 4-2.5 7-6 7-2.5 0-4-1.2-5.5-3.5L4 13.5a1.5 1.5 0 012.5-1.6L8 14"/></svg></button>
+  <div class="sep"></div>
+  <button id="colorBtn" aria-label="Color del trazo" aria-expanded="false" title="Color del trazo"><span class="sw" id="colorSw"></span></button>
+  <button data-width="2" aria-pressed="false" aria-label="Trazo fino"><span class="dot" style="width:4px;height:4px"></span></button>
+  <button data-width="5" aria-pressed="true" aria-label="Trazo medio"><span class="dot" style="width:8px;height:8px"></span></button>
+  <button data-width="11" aria-pressed="false" aria-label="Trazo grueso"><span class="dot" style="width:13px;height:13px"></span></button>
+  <button data-width="24" aria-pressed="false" aria-label="Trazo muy grueso"><span class="dot" style="width:20px;height:20px"></span></button>
+  <button id="bgBtn" aria-label="Color del fondo" aria-expanded="false" title="Color del fondo"><span class="bgsw" id="bgSw"></span></button>
+  <div class="sep"></div>
+  <button id="undo" aria-label="Deshacer" title="Deshacer (Ctrl+Z)" disabled>
+    <svg class="i" viewBox="0 0 24 24"><path d="M9 7L4 12l5 5"/><path d="M4 12h10a6 6 0 010 12"/></svg></button>
+  <button id="redo" aria-label="Rehacer" title="Rehacer (Ctrl+Shift+Z)" disabled>
+    <svg class="i" viewBox="0 0 24 24"><path d="M15 7l5 5-5 5"/><path d="M20 12H10a6 6 0 000 12"/></svg></button>
+  <button id="zoom" class="zoom" aria-label="Volver a la vista inicial" title="Volver a la vista inicial">100%</button>
+  <button id="finger" aria-pressed="true" aria-label="Dibujar también con el dedo" title="Dibujar con el dedo">
+    <svg class="i" viewBox="0 0 24 24"><path d="M9 11V5a2 2 0 014 0v6"/><path d="M13 9.5a2 2 0 014 0V14c0 4-2.7 7-6.5 7-2.3 0-3.8-1-5-3l-2-3.5a1.6 1.6 0 012.7-1.7L8 14.5"/></svg></button>
+  <button id="saveBtn" aria-label="Guardar imagen o copia" aria-expanded="false" title="Guardar">
+    <svg class="i" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M5 19h14"/></svg></button>
+  <button id="clear" aria-label="Borrar todo el dibujo" title="Borrar todo">
+    <svg class="i" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>
+</div>
+
+<script>
+(() => {
+  'use strict';
+  const $ = id => document.getElementById(id);
+  const cv = $('cv'), ctx = cv.getContext('2d');
+  const ZMIN = 1e-6, ZMAX = 1e10;
+  const FORMAT = 'lienzo-infinito', FORMAT_VERSION = 1;
+  const INKS = ['#000000','#5B5F63','#A3A8AD','#FFFFFF','#7A1E1E','#D7263D','#FF6F59','#FF9F1C',
+                '#FFD23F','#C9E265','#3BB273','#1B7F5B','#2EC4B6','#3A86FF','#1D3F9E','#6A4C93',
+                '#B47AEA','#FF5DA2','#F7B2C8','#8D5524','#C68642','#E0AC69','#F1C27D','#FFE0BD'];
+  const BGS  = ['#FFFFFF','#F4F5F2','#FBF3DE','#FFF6B8','#FDE2E4','#E3F2E8','#DCEEFB','#E8E1F5',
+                '#D7C4A3','#B8C4CC','#2F4F3E','#1E2A44','#3B2F2F','#2B2B2B','#111418','#000000'];
+  const isTouchDevice = matchMedia('(pointer: coarse)').matches;
+  let dpr = 1, W = 0, H = 0;
+
+  // ---------- Almacenamiento (IndexedDB, con respaldo en memoria) ----------
+  const store = (() => {
+    let dbp = null, mem = null;
+    function open() {
+      if (dbp) return dbp;
+      dbp = new Promise((res, rej) => {
+        if (!('indexedDB' in window)) return rej(new Error('sin IndexedDB'));
+        const r = indexedDB.open('lienzo-infinito', 1);
+        r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('meta', { keyPath: 'id' }); d.createObjectStore('data', { keyPath: 'id' }); };
+        r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+      }).catch(err => { mem = { meta: new Map(), data: new Map() }; flash('Este navegador no permite guardar: los dibujos se perderán al cerrar.'); return null; });
+      return dbp;
+    }
+    const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    return {
+      async list() { const d = await open(); if (!d) return [...mem.meta.values()]; return req(d.transaction('meta').objectStore('meta').getAll()); },
+      async get(id) { const d = await open(); if (!d) return mem.data.get(id); return req(d.transaction('data').objectStore('data').get(id)); },
+      async put(meta, data) {
+        const d = await open(); if (!d) { mem.meta.set(meta.id, meta); if (data) mem.data.set(data.id, data); return; }
+        return new Promise((res, rej) => {
+          const t = d.transaction(['meta', 'data'], 'readwrite');
+          t.objectStore('meta').put(meta); if (data) t.objectStore('data').put(data);
+          t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
+        });
+      },
+      async del(id) {
+        const d = await open(); if (!d) { mem.meta.delete(id); mem.data.delete(id); return; }
+        return new Promise((res, rej) => { const t = d.transaction(['meta', 'data'], 'readwrite');
+          t.objectStore('meta').delete(id); t.objectStore('data').delete(id); t.oncomplete = res; t.onerror = () => rej(t.error); });
+      }
+    };
+  })();
+  let persistAsked = false;
+  function askPersist() { if (persistAsked) return; persistAsked = true; try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {} }
+  const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+  // ---------- Estado del dibujo abierto ----------
+  let doc = null;              // {id, name, created}
+  let strokes = [], view = { ox: 0, oy: 0, z: 1 }, bg = '#F4F5F2', showGrid = true;
+  let tool = 'pen', color = '#000000', width = 5, fingerDraw = true, penSeen = false;
+  const undoStack = [], redoStack = [];
+  try { const p = JSON.parse(localStorage.getItem('lienzo-prefs') || '{}'); penSeen = !!p.penSeen; fingerDraw = p.fingerDraw !== false; } catch (e) {}
+  const savePrefs = () => { try { localStorage.setItem('lienzo-prefs', JSON.stringify({ penSeen, fingerDraw })); } catch (e) {} };
+
+  // ---------- Geometría y dibujo ----------
+  // Trazo: {c, w (grosor en mundo), pr (presión), x0, y0, u (resolución), pts:[ix,iy,p%,...], bb:[x0,y0,x1,y1]}
+  let rc = ctx, rv = view;     // contexto y vista con los que se está dibujando
+  const PX = (s, i) => s.x0 + s.pts[i * 3] * s.u;
+  const PY = (s, i) => s.y0 + s.pts[i * 3 + 1] * s.u;
+  const PP = (s, i) => s.pts[i * 3 + 2] / 100;
+  const sx = x => x * rv.z + rv.ox, sy = y => y * rv.z + rv.oy;
+  const toWorld = (x, y) => [(x - view.ox) / view.z, (y - view.oy) / view.z];
+  function lum(hex) { const n = parseInt(hex.slice(1), 16); return (0.2126 * (n >> 16) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255; }
+  const segW = (s, p) => Math.max(0.35, (s.pr ? s.w * (0.3 + p * 1.0) : s.w) * rv.z);
+
+  function drawStroke(s, from = 0) {
+    const n = s.pts.length / 3, c = rc;
+    c.strokeStyle = c.fillStyle = s.c;
+    if (n === 1) { c.beginPath(); c.arc(sx(PX(s, 0)), sy(PY(s, 0)), segW(s, PP(s, 0)) / 2, 0, Math.PI * 2); c.fill(); return; }
+    if (!s.pr) {
+      c.lineWidth = segW(s, 0.5); c.beginPath(); c.moveTo(sx(PX(s, 0)), sy(PY(s, 0)));
+      for (let i = 1; i < n; i++) {
+        if (i < n - 1) c.quadraticCurveTo(sx(PX(s, i)), sy(PY(s, i)), (sx(PX(s, i)) + sx(PX(s, i + 1))) / 2, (sy(PY(s, i)) + sy(PY(s, i + 1))) / 2);
+        else c.lineTo(sx(PX(s, i)), sy(PY(s, i)));
+      }
+      c.stroke(); return;
+    }
+    for (let i = Math.max(1, from); i < n; i++) {
+      c.lineWidth = segW(s, (PP(s, i - 1) + PP(s, i)) / 2);
+      c.beginPath(); c.moveTo(sx(PX(s, i - 1)), sy(PY(s, i - 1))); c.lineTo(sx(PX(s, i)), sy(PY(s, i))); c.stroke();
+    }
+  }
+
+  function renderScene(c, w, h, scale, v, grid, list, extra) {
+    rc = c; rv = v;
+    c.setTransform(scale, 0, 0, scale, 0, 0);
+    c.fillStyle = bg; c.fillRect(0, 0, w, h);
+    if (grid) {
+      let step = 32 * v.z; while (step < 18) step *= 4; while (step > 72) step /= 4;
+      const r = Math.max(1, Math.min(2, step / 28));
+      c.fillStyle = lum(bg) > 0.5 ? 'rgba(0,0,0,.16)' : 'rgba(255,255,255,.3)';
+      const x0 = ((v.ox % step) + step) % step, y0 = ((v.oy % step) + step) % step;
+      for (let y = y0; y < h; y += step) for (let x = x0; x < w; x += step) c.fillRect(x - r / 2, y - r / 2, r, r);
+    }
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    const vx0 = -v.ox / v.z, vy0 = -v.oy / v.z, vx1 = (w - v.ox) / v.z, vy1 = (h - v.oy) / v.z;
+    for (const s of list) {
+      const b = s.bb, m = s.w * 1.5;
+      if (b[2] + m < vx0 || b[0] - m > vx1 || b[3] + m < vy0 || b[1] - m > vy1) continue;
+      if (Math.max(b[2] - b[0] + s.w, b[3] - b[1] + s.w) * v.z < 0.4) continue;
+      drawStroke(s);
+    }
+    if (extra) drawStroke(extra);
+    rc = ctx; rv = view;
+  }
+
+  function render() {
+    renderScene(ctx, W, H, dpr, view, showGrid, strokes, current);
+    zoomBtn.textContent = zoomLabel(view.z);
+  }
+  const compact = new Intl.NumberFormat('es', { notation: 'compact', maximumSignificantDigits: 3 });
+  function zoomLabel(z) {
+    if (z >= 100) return '×' + compact.format(z);
+    const pct = z * 100; return (pct >= 10 ? Math.round(pct) : Number(pct.toPrecision(2))).toLocaleString('es') + '%';
+  }
+  let rafPending = false;
+  const scheduleRender = () => { if (!rafPending) { rafPending = true; requestAnimationFrame(() => { rafPending = false; if (doc) render(); }); } };
+
+  function resize() {
+    dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
+    W = window.innerWidth; H = window.innerHeight;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    if (doc) render();
+  }
+
+  // ---------- Avisos ----------
+  const hint = $('hint'); let hintT = null;
+  function flash(msg, ms = 4000) { hint.textContent = msg; hint.classList.remove('off'); clearTimeout(hintT); hintT = setTimeout(() => hint.classList.add('off'), ms); }
+
+  // ---------- Guardado automático ----------
+  let saveT = null, dirty = false;
+  function markDirty() { dirty = true; clearTimeout(saveT); saveT = setTimeout(flushSave, 700); }
+  function thumbnail() {
+    const tw = 360, th = Math.max(1, Math.round(tw * H / W)), c = document.createElement('canvas');
+    c.width = tw; c.height = th;
+    renderScene(c.getContext('2d'), W, H, tw / W, view, false, strokes, null);
+    return c.toDataURL('image/jpeg', 0.75);
+  }
+  async function flushSave() {
+    clearTimeout(saveT);
+    if (!doc || !dirty) return;
+    dirty = false;
+    const now = Date.now();
+    try {
+      await store.put({ id: doc.id, name: doc.name, created: doc.created, updated: now, bg, thumb: thumbnail() },
+                      { id: doc.id, strokes, view: { ...view }, bg, showGrid });
+      askPersist();
+    } catch (e) { dirty = true; flash('No se ha podido guardar el dibujo. Guarda una copia editable por si acaso.', 6000); }
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
+  window.addEventListener('pagehide', flushSave);
+
+  // ---------- Deshacer / rehacer ----------
+  const undoBtn = $('undo'), redoBtn = $('redo');
+  function pushAction(a) { undoStack.push(a); redoStack.length = 0; syncHistory(); markDirty(); }
+  function syncHistory() { undoBtn.disabled = !undoStack.length; redoBtn.disabled = !redoStack.length; }
+  function applyInverse(a, to) {
+    if (a.type === 'add') { const i = strokes.lastIndexOf(a.s); if (i >= 0) strokes.splice(i, 1); to.push({ type: 'remove', s: a.s }); }
+    else if (a.type === 'remove') { strokes.push(a.s); to.push({ type: 'add', s: a.s }); }
+    else if (a.type === 'erase') { a.items.slice().sort((x, y) => x.i - y.i).forEach(it => strokes.splice(Math.min(it.i, strokes.length), 0, it.s)); to.push({ type: 'unerase', items: a.items }); }
+    else if (a.type === 'unerase') { a.items.forEach(it => { const i = strokes.indexOf(it.s); if (i >= 0) strokes.splice(i, 1); }); to.push({ type: 'erase', items: a.items }); }
+    else if (a.type === 'clear') { strokes = a.prev; to.push({ type: 'unclear', prev: a.prev }); }
+    else if (a.type === 'unclear') { strokes = []; to.push({ type: 'clear', prev: a.prev }); }
+    else if (a.type === 'bg') { const cur = bg; bg = a.prev; to.push({ type: 'bg', prev: cur }); updateSwatches(); }
+  }
+  function undo() { const a = undoStack.pop(); if (!a) return; applyInverse(a, redoStack); syncHistory(); render(); markDirty(); }
+  function redo() { const a = redoStack.pop(); if (!a) return; applyInverse(a, undoStack); syncHistory(); render(); markDirty(); }
+  undoBtn.onclick = undo; redoBtn.onclick = redo;
+
+  // ---------- Entrada ----------
+  const pointers = new Map();
+  let current = null, currentId = null, erasing = null, panId = null, pinch = null, spaceDown = false;
+
+  function startStroke(e) {
+    const [x, y] = toWorld(e.clientX, e.clientY), pr = e.pointerType === 'pen';
+    current = { c: color, w: width / view.z, pr, x0: x, y0: y, u: 0.05 / view.z,
+                pts: [0, 0, pr ? Math.round((e.pressure || 0.5) * 100) : 50], bb: [x, y, x, y] };
+    currentId = e.pointerId;
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; drawStroke(current);
+  }
+  function extendStroke(e) {
+    const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
+    const s = current, n0 = s.pts.length / 3;
+    for (const ev of (evs.length ? evs : [e])) {
+      const [x, y] = toWorld(ev.clientX, ev.clientY), k = s.pts.length / 3 - 1;
+      if (Math.hypot(x - PX(s, k), y - PY(s, k)) * view.z < 1) continue;
+      s.pts.push(Math.round((x - s.x0) / s.u), Math.round((y - s.y0) / s.u), s.pr ? Math.round((ev.pressure || 0.5) * 100) : 50);
+      const b = s.bb; if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (x > b[2]) b[2] = x; if (y > b[3]) b[3] = y;
+    }
+    if (s.pts.length / 3 > n0) { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; s.pr ? drawStroke(s, n0) : scheduleRender(); }
+  }
+  function endStroke(cancel) {
+    if (!current) return;
+    const s = current; current = null; currentId = null;
+    if (!cancel) { strokes.push(s); pushAction({ type: 'add', s }); }
+    render();
+  }
+  function distToSeg(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
+    let t = l ? ((px - ax) * dx + (py - ay) * dy) / l : 0; t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+  }
+  function eraseAt(e) {
+    const [x, y] = toWorld(e.clientX, e.clientY), r = 12 / view.z; let hit = false;
+    for (let i = strokes.length - 1; i >= 0; i--) {
+      const s = strokes[i], b = s.bb, m = r + s.w;
+      if (x < b[0] - m || x > b[2] + m || y < b[1] - m || y > b[3] + m) continue;
+      const n = s.pts.length / 3;
+      for (let k = 0; k < n; k++) {
+        const d = k ? distToSeg(x, y, PX(s, k - 1), PY(s, k - 1), PX(s, k), PY(s, k)) : Math.hypot(x - PX(s, 0), y - PY(s, 0));
+        if (d <= r + s.w / 2) { erasing.push({ s, i }); strokes.splice(i, 1); hit = true; break; }
+      }
+    }
+    if (hit) scheduleRender();
+  }
+  function zoomAt(px, py, f) {
+    const nz = Math.max(ZMIN, Math.min(ZMAX, view.z * f)); if (nz === view.z) return;
+    const wx = (px - view.ox) / view.z, wy = (py - view.oy) / view.z;
+    view.z = nz; view.ox = px - wx * nz; view.oy = py - wy * nz;
+  }
+  const touchPointers = () => [...pointers.entries()].filter(([, p]) => p.type === 'touch');
+  function startPinch() {
+    const t = touchPointers(); if (t.length < 2) return;
+    const a = t[0][1], b = t[1][1];
+    pinch = { ids: [t[0][0], t[1][0]], mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
+  }
+
+  cv.addEventListener('pointerdown', e => {
+    if (!doc) return;
+    e.preventDefault(); closePanels(); hint.classList.add('off');
+    cv.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
+    if (e.pointerType === 'pen' && !penSeen) { penSeen = true; setFinger(false); }
+    if (e.pointerType === 'touch') {
+      if (touchPointers().length >= 2) {
+        if (current && pointers.get(currentId)?.type === 'touch') endStroke(current.pts.length < 30);
+        if (erasing) finishErase();
+        panId = null; startPinch(); return;
+      }
+      if (!fingerDraw) { panId = e.pointerId; return; }
+    }
+    if (tool === 'hand' || spaceDown || e.button === 1 || e.button === 2) { panId = e.pointerId; cv.classList.add('panning'); return; }
+    if (current) return;
+    if (tool === 'eraser') { erasing = []; currentId = e.pointerId; eraseAt(e); return; }
+    startStroke(e);
+  }, { passive: false });
+
+  cv.addEventListener('pointermove', e => {
+    const prev = pointers.get(e.pointerId); if (!prev) return;
+    e.preventDefault();
+    const dx = e.clientX - prev.x, dy = e.clientY - prev.y; prev.x = e.clientX; prev.y = e.clientY;
+    if (pinch && pinch.ids.includes(e.pointerId)) {
+      const a = pointers.get(pinch.ids[0]), b = pointers.get(pinch.ids[1]); if (!a || !b) return;
+      const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, d = Math.hypot(a.x - b.x, a.y - b.y);
+      view.ox += mx - pinch.mx; view.oy += my - pinch.my;
+      if (pinch.d > 0) zoomAt(mx, my, d / pinch.d);
+      pinch.mx = mx; pinch.my = my; pinch.d = d; scheduleRender(); markDirty(); return;
+    }
+    if (panId === e.pointerId) { view.ox += dx; view.oy += dy; scheduleRender(); markDirty(); return; }
+    if (currentId === e.pointerId) { if (erasing) eraseAt(e); else if (current) extendStroke(e); }
+  }, { passive: false });
+
+  function finishErase() { if (erasing && erasing.length) pushAction({ type: 'erase', items: erasing }); erasing = null; currentId = null; }
+  function pointerEnd(e) {
+    pointers.delete(e.pointerId);
+    if (pinch && pinch.ids.includes(e.pointerId)) { pinch = null; startPinch(); }
+    if (panId === e.pointerId) { panId = null; cv.classList.toggle('panning', tool === 'hand'); }
+    if (currentId === e.pointerId) { if (erasing) finishErase(); else endStroke(e.type === 'pointercancel' && current && current.pts.length < 9); }
+  }
+  cv.addEventListener('pointerup', pointerEnd);
+  cv.addEventListener('pointercancel', pointerEnd);
+  cv.addEventListener('contextmenu', e => e.preventDefault());
+  cv.addEventListener('wheel', e => {
+    if (!doc) return; e.preventDefault();
+    if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01));
+    else { view.ox -= e.deltaX; view.oy -= e.deltaY; }
+    scheduleRender(); markDirty();
+  }, { passive: false });
+  ['gesturestart', 'gesturechange'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+
+  // ---------- Barra y paneles del editor ----------
+  const toolBtns = [...document.querySelectorAll('[data-tool]')], widthBtns = [...document.querySelectorAll('[data-width]')];
+  const fingerBtn = $('finger'), zoomBtn = $('zoom');
+  const colorBtn = $('colorBtn'), bgBtn = $('bgBtn'), saveBtn = $('saveBtn');
+  const colorPanel = $('colorPanel'), bgPanel = $('bgPanel'), savePanel = $('savePanel');
+  const panels = [[colorPanel, colorBtn], [bgPanel, bgBtn], [savePanel, saveBtn]];
+  const inkGrid = $('inkGrid'), bgGrid = $('bgGrid'), gridToggle = $('gridToggle');
+
+  function setTool(t) { tool = t; toolBtns.forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === t)); cv.classList.toggle('panning', t === 'hand'); }
+  function setFinger(v) { fingerDraw = v; fingerBtn.setAttribute('aria-pressed', v); savePrefs(); }
+  function closePanels() { panels.forEach(([p, b]) => { p.classList.remove('open'); b.setAttribute('aria-expanded', 'false'); }); }
+  function togglePanel(panel, btn) { const open = !panel.classList.contains('open'); closePanels(); if (open) { panel.classList.add('open'); btn.setAttribute('aria-expanded', 'true'); } }
+  function updateSwatches() {
+    $('colorSw').style.setProperty('--c', color); $('bgSw').style.setProperty('--c', bg);
+    [...inkGrid.children].forEach(b => b.setAttribute('aria-pressed', b.dataset.c.toLowerCase() === color.toLowerCase()));
+    [...bgGrid.children].forEach(b => b.setAttribute('aria-pressed', b.dataset.c.toLowerCase() === bg.toLowerCase()));
+    gridToggle.setAttribute('aria-pressed', showGrid); gridToggle.textContent = showGrid ? 'Visibles' : 'Ocultos';
+  }
+  function setColor(c) { color = c; if (tool !== 'pen') setTool('pen'); updateSwatches(); }
+  function setBg(c) { if (c === bg) return; pushAction({ type: 'bg', prev: bg }); bg = c; updateSwatches(); render(); }
+
+  INKS.forEach(c => { const b = document.createElement('button'); b.dataset.c = c; b.style.setProperty('--c', c); b.setAttribute('aria-label', 'Color ' + c);
+    b.onclick = () => { setColor(c); closePanels(); }; inkGrid.appendChild(b); });
+  BGS.forEach(c => { const b = document.createElement('button'); b.dataset.c = c; b.style.setProperty('--c', c); b.setAttribute('aria-label', 'Fondo ' + c);
+    b.onclick = () => setBg(c); bgGrid.appendChild(b); });
+  $('inkCustom').addEventListener('input', e => setColor(e.target.value));
+  $('bgCustom').addEventListener('change', e => setBg(e.target.value));
+  gridToggle.onclick = () => { showGrid = !showGrid; updateSwatches(); render(); markDirty(); };
+  colorBtn.onclick = () => togglePanel(colorPanel, colorBtn);
+  bgBtn.onclick = () => togglePanel(bgPanel, bgBtn);
+  saveBtn.onclick = () => togglePanel(savePanel, saveBtn);
+  toolBtns.forEach(b => b.onclick = () => { setTool(b.dataset.tool); closePanels(); });
+  widthBtns.forEach(b => b.onclick = () => { width = +b.dataset.width; widthBtns.forEach(x => x.setAttribute('aria-pressed', x === b)); if (tool !== 'pen') setTool('pen'); closePanels(); });
+  fingerBtn.onclick = () => setFinger(!fingerDraw);
+  zoomBtn.onclick = () => { view = { ox: W / 2, oy: H / 2, z: 1 }; render(); markDirty(); };
+  $('clear').onclick = () => {
+    if (!strokes.length) return;
+    if (!confirm('¿Borrar todo este dibujo? Puedes recuperarlo con Deshacer mientras no salgas.')) return;
+    pushAction({ type: 'clear', prev: strokes }); strokes = []; render();
+  };
+  $('backBtn').onclick = async () => { closePanels(); await flushSave(); showGallery(); };
+
+  // ---------- Descargas ----------
+  const slug = s => (s || 'dibujo').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'dibujo';
+  const today = () => new Date().toISOString().slice(0, 10);
+  function dataURLtoBlob(d) {
+    const [h, b] = d.split(','), mime = h.match(/:(.*?);/)[1], bin = atob(b), arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new Blob([arr], { type: mime });
+  }
+  // Se llama directamente desde el toque del usuario (sin esperas) para que el iPad permita abrir el menú de compartir.
+  function deliver(blob, filename) {
+    const file = new File([blob], filename, { type: blob.type });
+    if (isTouchDevice && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file] }).catch(err => { if (err && err.name !== 'AbortError') downloadLink(blob, filename); });
+      return;
+    }
+    downloadLink(blob, filename);
+  }
+  function downloadLink(blob, filename) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
+  }
+  function backupBlob(name, data) {
+    return new Blob([JSON.stringify({ format: FORMAT, version: FORMAT_VERSION, name, exported: new Date().toISOString(),
+      bg: data.bg, showGrid: data.showGrid, view: data.view, strokes: data.strokes })], { type: 'application/json' });
+  }
+  $('saveImage').onclick = () => {
+    closePanels();
+    const scale = Math.max(dpr, Math.min(3, 4096 / Math.max(W, H)));
+    const c = document.createElement('canvas'); c.width = Math.round(W * scale); c.height = Math.round(H * scale);
+    renderScene(c.getContext('2d'), W, H, scale, view, false, strokes, null);
+    deliver(dataURLtoBlob(c.toDataURL('image/png')), slug(doc.name) + '-' + today() + '.png');
+  };
+  $('saveBackup').onclick = () => {
+    closePanels();
+    deliver(backupBlob(doc.name, { bg, showGrid, view, strokes }), slug(doc.name) + '-' + today() + '.json');
+  };
+
+  // ---------- Validación de copias importadas ----------
+  const fin = n => typeof n === 'number' && isFinite(n);
+  function validBackup(d) {
+    if (!d || d.format !== FORMAT || !Array.isArray(d.strokes) || d.strokes.length > 200000) return false;
+    if (d.view && !(fin(d.view.ox) && fin(d.view.oy) && fin(d.view.z) && d.view.z > 0)) return false;
+    for (const s of d.strokes) {
+      if (!s || typeof s.c !== 'string' || !/^#[0-9a-f]{6}$/i.test(s.c)) return false;
+      if (!fin(s.w) || s.w <= 0 || !fin(s.x0) || !fin(s.y0) || !fin(s.u) || s.u <= 0) return false;
+      if (!Array.isArray(s.pts) || !s.pts.length || s.pts.length % 3 || !s.pts.every(fin)) return false;
+      if (!Array.isArray(s.bb) || s.bb.length !== 4 || !s.bb.every(fin)) return false;
+      s.pr = !!s.pr;
+    }
+    return true;
+  }
+
+  // ---------- Galería ----------
+  const gallery = $('gallery'), cards = $('cards'), empty = $('empty');
+  const sheet = $('cardSheet'); let sheetMeta = null, sheetData = null;
+  const dateFmt = new Intl.DateTimeFormat('es', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  $('installNote').hidden = standalone || !isTouchDevice;
+
+  async function showGallery() {
+    doc = null; strokes = []; current = null;
+    gallery.hidden = false;
+    let list = [];
+    try { list = await store.list(); } catch (e) {}
+    list.sort((a, b) => b.updated - a.updated);
+    cards.textContent = '';
+    empty.hidden = list.length > 0;
+    for (const m of list) {
+      const card = document.createElement('div'); card.className = 'card';
+      const open = document.createElement('button'); open.className = 'open'; open.style.setProperty('--c', m.bg || '#fff');
+      open.setAttribute('aria-label', 'Abrir ' + m.name);
+      if (m.thumb) { const img = document.createElement('img'); img.src = m.thumb; img.alt = ''; open.appendChild(img); }
+      open.onclick = () => openDrawing(m.id);
+      const meta = document.createElement('div'); meta.className = 'meta';
+      const txt = document.createElement('div');
+      const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = m.name;
+      const dt = document.createElement('div'); dt.className = 'date'; dt.textContent = dateFmt.format(new Date(m.updated));
+      txt.append(nm, dt);
+      const more = document.createElement('button'); more.setAttribute('aria-label', 'Opciones de ' + m.name);
+      more.innerHTML = '<svg class="i" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>';
+      more.onclick = () => openSheet(m);
+      meta.append(txt, more); card.append(open, meta); cards.appendChild(card);
+    }
+  }
+  function openSheet(m) {
+    sheetMeta = m; sheetData = null; $('cardSheetTitle').textContent = m.name; sheet.classList.add('open');
+    store.get(m.id).then(d => { if (sheetMeta === m) sheetData = d; }).catch(() => {});   // precarga para poder compartir al instante
+  }
+  const closeSheet = () => { sheet.classList.remove('open'); sheetMeta = null; sheetData = null; };
+  sheet.addEventListener('click', e => { if (e.target === sheet) closeSheet(); });
+  $('actCancel').onclick = closeSheet;
+  $('actRename').onclick = async () => {
+    const m = sheetMeta; if (!m) return;
+    const n = prompt('Nombre del dibujo', m.name); if (n === null) return;
+    const name = n.trim().slice(0, 60) || m.name; closeSheet();
+    await store.put({ ...m, name }); showGallery();
+  };
+  $('actBackup').onclick = () => {
+    if (!sheetMeta) return;
+    if (!sheetData) { flash('Cargando el dibujo, vuelve a pulsar en un momento.'); return; }
+    deliver(backupBlob(sheetMeta.name, sheetData), slug(sheetMeta.name) + '-' + today() + '.json'); closeSheet();
+  };
+  $('actDelete').onclick = async () => {
+    const m = sheetMeta; if (!m) return;
+    if (!confirm('¿Borrar "' + m.name + '" para siempre? Esto no se puede deshacer.')) return;
+    closeSheet(); await store.del(m.id); showGallery();
+  };
+
+  async function nextName() {
+    let list = []; try { list = await store.list(); } catch (e) {}
+    let n = list.length + 1; const names = new Set(list.map(m => m.name));
+    while (names.has('Dibujo ' + n)) n++;
+    return 'Dibujo ' + n;
+  }
+  $('newBtn').onclick = async () => {
+    const id = newId(), now = Date.now();
+    startEditing({ id, name: await nextName(), created: now }, { strokes: [], view: { ox: W / 2, oy: H / 2, z: 1 }, bg: '#F4F5F2', showGrid: true });
+    markDirty(); flushSave();
+    flash(fingerDraw ? 'Dibuja con el lápiz o el dedo. Dos dedos para moverte y hacer zoom.' : 'Dibuja con el lápiz. Dos dedos para moverte y hacer zoom.', 5000);
+  };
+  async function openDrawing(id) {
+    let data = null, meta = null;
+    try { data = await store.get(id); meta = (await store.list()).find(m => m.id === id); } catch (e) {}
+    if (!data || !meta) { flash('No se ha podido abrir este dibujo.'); return; }
+    startEditing({ id, name: meta.name, created: meta.created }, data);
+  }
+  function startEditing(d, data) {
+    doc = d; strokes = data.strokes || []; view = data.view || { ox: W / 2, oy: H / 2, z: 1 };
+    bg = data.bg || '#F4F5F2'; showGrid = data.showGrid !== false;
+    undoStack.length = 0; redoStack.length = 0; syncHistory(); current = null; dirty = false;
+    setTool('pen'); setFinger(fingerDraw); updateSwatches(); closePanels();
+    gallery.hidden = true; resize();
+  }
+
+  // Importar copia editable
+  $('importBtn').onclick = () => $('importFile').click();
+  $('importFile').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0]; e.target.value = '';
+    if (!f) return;
+    if (f.size > 60 * 1024 * 1024) { flash('Ese archivo es demasiado grande.'); return; }
+    let d; try { d = JSON.parse(await f.text()); } catch (err) { d = null; }
+    if (!validBackup(d)) { flash('Ese archivo no es una copia de Lienzo infinito.'); return; }
+    const id = newId(), now = Date.now();
+    const name = (typeof d.name === 'string' && d.name.trim() ? d.name.trim().slice(0, 50) : 'Dibujo') + ' (copia)';
+    startEditing({ id, name, created: now }, { strokes: d.strokes, view: d.view, bg: /^#[0-9a-f]{6}$/i.test(d.bg) ? d.bg : '#F4F5F2', showGrid: d.showGrid !== false });
+    markDirty(); await flushSave(); flash('Copia abierta como "' + name + '".');
+  });
+
+  // ---------- Teclado y arranque ----------
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closePanels(); closeSheet(); }
+    if (!doc || e.target.tagName === 'INPUT') return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+    if (e.code === 'Space' && !spaceDown) { spaceDown = true; cv.classList.add('panning'); e.preventDefault(); }
+    const k = e.key.toLowerCase();
+    if (k === 'p') setTool('pen'); else if (k === 'e') setTool('eraser'); else if (k === 'h') setTool('hand');
+  });
+  window.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; cv.classList.toggle('panning', tool === 'hand'); } });
+  window.addEventListener('resize', resize);
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(() => {});
+  resize(); showGallery();
+})();
+</script>
+</body>
+</html>
