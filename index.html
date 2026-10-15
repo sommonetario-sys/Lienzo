@@ -26,16 +26,17 @@
 :root[data-theme="dark"]{ --page:#171C1A; --card:#232A27; --bar:#262D2A; --bar-line:#3A4440; --bar-text:#D5DDD9;
   --muted:#9AA7A1; --sel:#E8EDEA; --sel-text:#1B201E; --focus:#7FA6EE; --danger:#F07C72; }
 *,*::before,*::after{box-sizing:border-box}
-html,body{height:100%;margin:0;overflow:hidden;background:var(--page);overscroll-behavior:none;
+html,body{height:100%;margin:0;overflow:hidden;background:var(--page);overscroll-behavior:none;touch-action:manipulation;
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
-canvas#cv{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block;cursor:crosshair}
+canvas#base{position:fixed;inset:0;width:100%;height:100%;display:block;pointer-events:none;transform-origin:0 0}
+canvas#cv{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:block;cursor:crosshair;background:transparent}
 canvas#cv.panning{cursor:grab}
 .bar{position:fixed;left:50%;transform:translateX(-50%);bottom:0;margin-bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
   display:flex;align-items:center;gap:4px;background:var(--bar);border:1px solid var(--bar-line);border-radius:18px;padding:6px;
   max-width:calc(100% - 16px);overflow-x:auto;scrollbar-width:none;color:var(--bar-text);box-shadow:0 6px 24px rgba(20,30,25,.14)}
 .bar::-webkit-scrollbar{display:none}
 .sep{width:1px;align-self:stretch;background:var(--bar-line);margin:4px;flex:none}
-button{appearance:none;border:0;background:transparent;color:inherit;flex:none;width:44px;height:44px;border-radius:12px;
+button{touch-action:manipulation;appearance:none;border:0;background:transparent;color:inherit;flex:none;width:44px;height:44px;border-radius:12px;
   display:grid;place-items:center;cursor:pointer;font:inherit;padding:0}
 button:focus-visible,label:focus-within{outline:2px solid var(--focus);outline-offset:2px}
 button[aria-pressed="true"]{background:var(--sel);color:var(--sel-text)}
@@ -91,6 +92,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .card .meta div{flex:1;min-width:0}
 .card .name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card .date{font-size:13px;color:var(--muted)}
+.foot{margin-top:40px;font-size:12px;color:var(--muted);line-height:1.5;-webkit-user-select:text;user-select:text}
 .empty{text-align:center;padding:60px 20px;color:var(--muted);font-size:16px;line-height:1.5}
 .sheet{position:fixed;inset:0;z-index:30;background:rgba(10,15,12,.35);display:none;align-items:flex-end;justify-content:center;
   padding:0 8px calc(env(safe-area-inset-bottom,0px) + 8px)}
@@ -116,6 +118,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     <p class="note" id="installNote" hidden>Para que los dibujos no se borren solos, añade esta página a la pantalla de inicio: botón de compartir y luego "Añadir a pantalla de inicio". Ábrela siempre desde ese icono.</p>
     <div class="cards" id="cards"></div>
     <div class="empty" id="empty" hidden>Todavía no hay dibujos.<br>Pulsa "Nuevo dibujo" para empezar.</div>
+    <p class="foot" id="foot"></p>
   </div>
   <input type="file" id="importFile" accept=".json,application/json" hidden>
 </section>
@@ -132,6 +135,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 </div>
 
 <!-- Editor -->
+<canvas id="base" aria-hidden="true"></canvas>
 <canvas id="cv" aria-label="Lienzo de dibujo"></canvas>
 <div class="hint off" id="hint"></div>
 
@@ -188,11 +192,23 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 </div>
 
 <script>
+// Registro de errores: se guardan los últimos para poder diagnosticar bloqueos.
+(() => {
+  const log = m => { try { const l = JSON.parse(localStorage.getItem('lienzo-errors') || '[]'); l.unshift({ t: Date.now(), m: String(m).slice(0, 300) });
+    localStorage.setItem('lienzo-errors', JSON.stringify(l.slice(0, 5))); } catch (e) {} };
+  window.__logError = log;
+  window.addEventListener('error', e => log((e.message || 'error') + (e.lineno ? ' (línea ' + e.lineno + ')' : '')));
+  window.addEventListener('unhandledrejection', e => log('promesa: ' + ((e.reason && (e.reason.message || e.reason)) || 'desconocido')));
+})();
+
 (() => {
   'use strict';
+  const APP_VERSION = '4';
   const $ = id => document.getElementById(id);
-  const cv = $('cv'), ctx = cv.getContext('2d');
-  const ZMIN = 1e-6, ZMAX = 1e10;
+  const logError = window.__logError;
+  const base = $('base'), bctx = base.getContext('2d');   // capa con el dibujo ya hecho
+  const cv = $('cv'), lctx = cv.getContext('2d');         // capa del trazo en curso (recibe los toques)
+  const ZMIN = 1e-6, ZMAX = 1e10, MAX_UNDO = 300;
   const FORMAT = 'lienzo-infinito', FORMAT_VERSION = 1;
   const INKS = ['#000000','#5B5F63','#A3A8AD','#FFFFFF','#7A1E1E','#D7263D','#FF6F59','#FF9F1C',
                 '#FFD23F','#C9E265','#3BB273','#1B7F5B','#2EC4B6','#3A86FF','#1D3F9E','#6A4C93',
@@ -200,37 +216,55 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   const BGS  = ['#FFFFFF','#F4F5F2','#FBF3DE','#FFF6B8','#FDE2E4','#E3F2E8','#DCEEFB','#E8E1F5',
                 '#D7C4A3','#B8C4CC','#2F4F3E','#1E2A44','#3B2F2F','#2B2B2B','#111418','#000000'];
   const isTouchDevice = matchMedia('(pointer: coarse)').matches;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
   let dpr = 1, W = 0, H = 0;
 
-  // ---------- Almacenamiento (IndexedDB, con respaldo en memoria) ----------
+  // ---------- Avisos ----------
+  const hint = $('hint'); let hintT = null;
+  function flash(msg, ms = 4000) { hint.textContent = msg; hint.classList.remove('off'); clearTimeout(hintT); hintT = setTimeout(() => hint.classList.add('off'), ms); }
+  const hideHint = () => hint.classList.add('off');
+
+  // ---------- Almacenamiento (IndexedDB con reconexión y límites de tiempo) ----------
   const store = (() => {
-    let dbp = null, mem = null;
+    const hasIDB = 'indexedDB' in window;
+    const mem = { meta: new Map(), data: new Map() };
+    let dbp = null;
+    const withTimeout = (p, ms, what) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('sin respuesta al ' + what)), ms))]);
+    const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
     function open() {
       if (dbp) return dbp;
-      dbp = new Promise((res, rej) => {
-        if (!('indexedDB' in window)) return rej(new Error('sin IndexedDB'));
+      const p = new Promise((res, rej) => {
         const r = indexedDB.open('lienzo-infinito', 1);
         r.onupgradeneeded = () => { const d = r.result; d.createObjectStore('meta', { keyPath: 'id' }); d.createObjectStore('data', { keyPath: 'id' }); };
-        r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
-      }).catch(err => { mem = { meta: new Map(), data: new Map() }; flash('Este navegador no permite guardar: los dibujos se perderán al cerrar.'); return null; });
+        r.onsuccess = () => { const d = r.result; d.onclose = () => { dbp = null; }; d.onversionchange = () => { d.close(); dbp = null; }; res(d); };
+        r.onerror = () => rej(r.error);
+      });
+      dbp = withTimeout(p, 5000, 'abrir el almacén');
+      dbp.catch(() => { dbp = null; });
       return dbp;
     }
-    const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+    // Si el iPad cierra la conexión en segundo plano, se reabre y se reintenta una vez.
+    async function run(fn, what) {
+      for (let attempt = 0; ; attempt++) {
+        try { const d = await open(); return await withTimeout(fn(d), 8000, what); }
+        catch (e) { dbp = null; if (attempt >= 1) throw e; }
+      }
+    }
+    const txDone = t => new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error('abortado')); });
     return {
-      async list() { const d = await open(); if (!d) return [...mem.meta.values()]; return req(d.transaction('meta').objectStore('meta').getAll()); },
-      async get(id) { const d = await open(); if (!d) return mem.data.get(id); return req(d.transaction('data').objectStore('data').get(id)); },
-      async put(meta, data) {
-        const d = await open(); if (!d) { mem.meta.set(meta.id, meta); if (data) mem.data.set(data.id, data); return; }
-        return new Promise((res, rej) => {
-          const t = d.transaction(['meta', 'data'], 'readwrite');
-          t.objectStore('meta').put(meta); if (data) t.objectStore('data').put(data);
-          t.oncomplete = res; t.onerror = () => rej(t.error); t.onabort = () => rej(t.error);
-        });
+      persistent: hasIDB,
+      list() { return hasIDB ? run(d => req(d.transaction('meta').objectStore('meta').getAll()), 'listar') : Promise.resolve([...mem.meta.values()]); },
+      getMeta(id) { return hasIDB ? run(d => req(d.transaction('meta').objectStore('meta').get(id)), 'leer') : Promise.resolve(mem.meta.get(id)); },
+      get(id) { return hasIDB ? run(d => req(d.transaction('data').objectStore('data').get(id)), 'leer') : Promise.resolve(mem.data.get(id)); },
+      put(meta, data) {
+        if (!hasIDB) { mem.meta.set(meta.id, meta); if (data) mem.data.set(data.id, data); return Promise.resolve(); }
+        return run(d => { const t = d.transaction(data ? ['meta', 'data'] : ['meta'], 'readwrite');
+          t.objectStore('meta').put(meta); if (data) t.objectStore('data').put(data); return txDone(t); }, 'guardar');
       },
-      async del(id) {
-        const d = await open(); if (!d) { mem.meta.delete(id); mem.data.delete(id); return; }
-        return new Promise((res, rej) => { const t = d.transaction(['meta', 'data'], 'readwrite');
-          t.objectStore('meta').delete(id); t.objectStore('data').delete(id); t.oncomplete = res; t.onerror = () => rej(t.error); });
+      del(id) {
+        if (!hasIDB) { mem.meta.delete(id); mem.data.delete(id); return Promise.resolve(); }
+        return run(d => { const t = d.transaction(['meta', 'data'], 'readwrite');
+          t.objectStore('meta').delete(id); t.objectStore('data').delete(id); return txDone(t); }, 'borrar');
       }
     };
   })();
@@ -238,53 +272,72 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   function askPersist() { if (persistAsked) return; persistAsked = true; try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {} }
   const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
-  // ---------- Estado del dibujo abierto ----------
-  let doc = null;              // {id, name, created}
+  // ---------- Estado ----------
+  let doc = null;              // {id, name, created, updated, thumb}
   let strokes = [], view = { ox: 0, oy: 0, z: 1 }, bg = '#F4F5F2', showGrid = true;
   let tool = 'pen', color = '#000000', width = 5, fingerDraw = true, penSeen = false;
   const undoStack = [], redoStack = [];
   try { const p = JSON.parse(localStorage.getItem('lienzo-prefs') || '{}'); penSeen = !!p.penSeen; fingerDraw = p.fingerDraw !== false; } catch (e) {}
   const savePrefs = () => { try { localStorage.setItem('lienzo-prefs', JSON.stringify({ penSeen, fingerDraw })); } catch (e) {} };
 
-  // ---------- Geometría y dibujo ----------
+  // ---------- Dibujo ----------
   // Trazo: {c, w (grosor en mundo), pr (presión), x0, y0, u (resolución), pts:[ix,iy,p%,...], bb:[x0,y0,x1,y1]}
-  let rc = ctx, rv = view;     // contexto y vista con los que se está dibujando
+  function lum(hex) { const n = parseInt(hex.slice(1), 16); return (0.2126 * (n >> 16) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255; }
+  const toWorld = (x, y) => [(x - view.ox) / view.z, (y - view.oy) / view.z];
   const PX = (s, i) => s.x0 + s.pts[i * 3] * s.u;
   const PY = (s, i) => s.y0 + s.pts[i * 3 + 1] * s.u;
-  const PP = (s, i) => s.pts[i * 3 + 2] / 100;
-  const sx = x => x * rv.z + rv.ox, sy = y => y * rv.z + rv.oy;
-  const toWorld = (x, y) => [(x - view.ox) / view.z, (y - view.oy) / view.z];
-  function lum(hex) { const n = parseInt(hex.slice(1), 16); return (0.2126 * (n >> 16) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255; }
-  const segW = (s, p) => Math.max(0.35, (s.pr ? s.w * (0.3 + p * 1.0) : s.w) * rv.z);
 
-  function drawStroke(s, from = 0) {
-    const n = s.pts.length / 3, c = rc;
+  // Dibuja un trazo en pantalla. Omite puntos que caen a menos de ~1 píxel entre sí y agrupa
+  // los segmentos de grosor parecido en un solo camino: eso es lo que mantiene la fluidez con dibujos grandes.
+  function drawStroke(c, s, v) {
+    const p = s.pts, n = p.length / 3, z = v.z, ox = v.ox, oy = v.oy, x0 = s.x0, y0 = s.y0, u = s.u;
     c.strokeStyle = c.fillStyle = s.c;
-    if (n === 1) { c.beginPath(); c.arc(sx(PX(s, 0)), sy(PY(s, 0)), segW(s, PP(s, 0)) / 2, 0, Math.PI * 2); c.fill(); return; }
+    if (n === 1) {
+      const r = Math.max(0.35, s.w * (s.pr ? 0.3 + p[2] / 100 : 1) * z) / 2;
+      c.beginPath(); c.arc((x0 + p[0] * u) * z + ox, (y0 + p[1] * u) * z + oy, r, 0, Math.PI * 2); c.fill(); return;
+    }
     if (!s.pr) {
-      c.lineWidth = segW(s, 0.5); c.beginPath(); c.moveTo(sx(PX(s, 0)), sy(PY(s, 0)));
+      const q = [(x0 + p[0] * u) * z + ox, (y0 + p[1] * u) * z + oy];
       for (let i = 1; i < n; i++) {
-        if (i < n - 1) c.quadraticCurveTo(sx(PX(s, i)), sy(PY(s, i)), (sx(PX(s, i)) + sx(PX(s, i + 1))) / 2, (sy(PY(s, i)) + sy(PY(s, i + 1))) / 2);
-        else c.lineTo(sx(PX(s, i)), sy(PY(s, i)));
+        const x = (x0 + p[i * 3] * u) * z + ox, y = (y0 + p[i * 3 + 1] * u) * z + oy;
+        const dx = x - q[q.length - 2], dy = y - q[q.length - 1];
+        if (i < n - 1 && dx * dx + dy * dy < 0.6) continue;
+        q.push(x, y);
+      }
+      const m = q.length / 2;
+      c.lineWidth = Math.max(0.35, s.w * z);
+      c.beginPath(); c.moveTo(q[0], q[1]);
+      for (let i = 1; i < m; i++) {
+        if (i < m - 1) c.quadraticCurveTo(q[i * 2], q[i * 2 + 1], (q[i * 2] + q[i * 2 + 2]) / 2, (q[i * 2 + 1] + q[i * 2 + 3]) / 2);
+        else c.lineTo(q[i * 2], q[i * 2 + 1]);
       }
       c.stroke(); return;
     }
-    for (let i = Math.max(1, from); i < n; i++) {
-      c.lineWidth = segW(s, (PP(s, i - 1) + PP(s, i)) / 2);
-      c.beginPath(); c.moveTo(sx(PX(s, i - 1)), sy(PY(s, i - 1))); c.lineTo(sx(PX(s, i)), sy(PY(s, i))); c.stroke();
+    let lx = (x0 + p[0] * u) * z + ox, ly = (y0 + p[1] * u) * z + oy, lp = p[2], cur = -1;
+    c.beginPath(); c.moveTo(lx, ly);
+    for (let i = 1; i < n; i++) {
+      const x = (x0 + p[i * 3] * u) * z + ox, y = (y0 + p[i * 3 + 1] * u) * z + oy, pp = p[i * 3 + 2];
+      const dx = x - lx, dy = y - ly;
+      if (i < n - 1 && dx * dx + dy * dy < 0.6) continue;
+      const w = Math.max(0.35, s.w * (0.3 + (lp + pp) / 200) * z);
+      const wb = w < 4 ? Math.round(w * 4) / 4 : Math.round(w * 2) / 2;
+      if (wb !== cur) { if (cur >= 0) { c.stroke(); c.beginPath(); c.moveTo(lx, ly); } c.lineWidth = wb; cur = wb; }
+      c.lineTo(x, y); lx = x; ly = y; lp = pp;
     }
+    c.stroke();
   }
 
-  function renderScene(c, w, h, scale, v, grid, list, extra) {
-    rc = c; rv = v;
+  function paintScene(c, w, h, scale, v, grid, list) {
     c.setTransform(scale, 0, 0, scale, 0, 0);
     c.fillStyle = bg; c.fillRect(0, 0, w, h);
     if (grid) {
       let step = 32 * v.z; while (step < 18) step *= 4; while (step > 72) step /= 4;
-      const r = Math.max(1, Math.min(2, step / 28));
-      c.fillStyle = lum(bg) > 0.5 ? 'rgba(0,0,0,.16)' : 'rgba(255,255,255,.3)';
-      const x0 = ((v.ox % step) + step) % step, y0 = ((v.oy % step) + step) % step;
-      for (let y = y0; y < h; y += step) for (let x = x0; x < w; x += step) c.fillRect(x - r / 2, y - r / 2, r, r);
+      if (isFinite(step) && step > 0) {
+        const r = Math.max(1, Math.min(2, step / 28));
+        c.fillStyle = lum(bg) > 0.5 ? 'rgba(0,0,0,.16)' : 'rgba(255,255,255,.3)';
+        const gx = ((v.ox % step) + step) % step, gy = ((v.oy % step) + step) % step;
+        for (let y = gy; y < h; y += step) for (let x = gx; x < w; x += step) c.fillRect(x - r / 2, y - r / 2, r, r);
+      }
     }
     c.lineCap = 'round'; c.lineJoin = 'round';
     const vx0 = -v.ox / v.z, vy0 = -v.oy / v.z, vx1 = (w - v.ox) / v.z, vy1 = (h - v.oy) / v.z;
@@ -292,61 +345,96 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
       const b = s.bb, m = s.w * 1.5;
       if (b[2] + m < vx0 || b[0] - m > vx1 || b[3] + m < vy0 || b[1] - m > vy1) continue;
       if (Math.max(b[2] - b[0] + s.w, b[3] - b[1] + s.w) * v.z < 0.4) continue;
-      drawStroke(s);
+      drawStroke(c, s, v);
     }
-    if (extra) drawStroke(extra);
-    rc = ctx; rv = view;
   }
 
-  function render() {
-    renderScene(ctx, W, H, dpr, view, showGrid, strokes, current);
+  // Capa base: se repinta entera solo cuando hace falta (deshacer, borrar, fin de zoom), nunca por cada movimiento.
+  let baseView = null, baseValid = false, fullPending = false, lastRenderMs = 0, settleT = null;
+  function renderBase() {
+    const t0 = performance.now();
+    paintScene(bctx, W, H, dpr, view, showGrid, strokes);
+    baseView = { ...view }; baseValid = true;
+    base.style.transform = '';
+    lastRenderMs = performance.now() - t0;
     zoomBtn.textContent = zoomLabel(view.z);
   }
+  function requestFull() {
+    if (fullPending) return;
+    fullPending = true;
+    const wait = lastRenderMs > 30 ? Math.min(300, lastRenderMs) : 0;   // si el dibujo es pesado, deja respirar a la tablet
+    setTimeout(() => requestAnimationFrame(() => { fullPending = false; if (doc) renderBase(); }), wait);
+  }
+  // Durante el zoom o el desplazamiento se mueve la imagen ya pintada; al parar se repinta con nitidez.
+  function viewChanged() {
+    zoomBtn.textContent = zoomLabel(view.z);
+    markViewDirty();
+    if (!baseView) { requestFull(); return; }
+    const k = view.z / baseView.z;
+    base.style.transform = 'translate(' + (view.ox - baseView.ox * k) + 'px,' + (view.oy - baseView.oy * k) + 'px) scale(' + k + ')';
+    baseValid = false;
+    clearTimeout(settleT); settleT = setTimeout(requestFull, 150);
+  }
+
+  let liveQueued = false, eraserAt = null;
+  function requestLive() { if (liveQueued) return; liveQueued = true; requestAnimationFrame(() => { liveQueued = false; drawLive(); }); }
+  function drawLive() {
+    lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.clearRect(0, 0, W, H);
+    lctx.lineCap = 'round'; lctx.lineJoin = 'round';
+    if (current && doc) drawStroke(lctx, current, view);
+    if (eraserAt) {
+      lctx.lineWidth = 1.5; lctx.strokeStyle = lum(bg) > 0.5 ? 'rgba(0,0,0,.45)' : 'rgba(255,255,255,.6)';
+      lctx.beginPath(); lctx.arc(eraserAt[0], eraserAt[1], 12, 0, Math.PI * 2); lctx.stroke();
+    }
+  }
+
   const compact = new Intl.NumberFormat('es', { notation: 'compact', maximumSignificantDigits: 3 });
   function zoomLabel(z) {
     if (z >= 100) return '×' + compact.format(z);
     const pct = z * 100; return (pct >= 10 ? Math.round(pct) : Number(pct.toPrecision(2))).toLocaleString('es') + '%';
   }
-  let rafPending = false;
-  const scheduleRender = () => { if (!rafPending) { rafPending = true; requestAnimationFrame(() => { rafPending = false; if (doc) render(); }); } };
 
   function resize() {
-    dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 3));
+    dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
     W = window.innerWidth; H = window.innerHeight;
-    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-    if (doc) render();
+    for (const c of [base, cv]) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+    if (doc) { renderBase(); drawLive(); }
   }
-
-  // ---------- Avisos ----------
-  const hint = $('hint'); let hintT = null;
-  function flash(msg, ms = 4000) { hint.textContent = msg; hint.classList.remove('off'); clearTimeout(hintT); hintT = setTimeout(() => hint.classList.add('off'), ms); }
 
   // ---------- Guardado automático ----------
-  let saveT = null, dirty = false;
-  function markDirty() { dirty = true; clearTimeout(saveT); saveT = setTimeout(flushSave, 700); }
+  // Se guarda en segundo plano, sin repintar el dibujo, y nunca bloquea la salida a la galería.
+  let saveT = null, strokesDirty = false, viewDirty = false, saving = null;
+  function markStrokesDirty() { strokesDirty = true; clearTimeout(saveT); saveT = setTimeout(flushSave, 1200); }
+  function markViewDirty() { viewDirty = true; if (!strokesDirty) { clearTimeout(saveT); saveT = setTimeout(flushSave, 1500); } }
   function thumbnail() {
-    const tw = 360, th = Math.max(1, Math.round(tw * H / W)), c = document.createElement('canvas');
-    c.width = tw; c.height = th;
-    renderScene(c.getContext('2d'), W, H, tw / W, view, false, strokes, null);
-    return c.toDataURL('image/jpeg', 0.75);
-  }
-  async function flushSave() {
-    clearTimeout(saveT);
-    if (!doc || !dirty) return;
-    dirty = false;
-    const now = Date.now();
+    if (!baseValid) return doc.thumb || null;
     try {
-      await store.put({ id: doc.id, name: doc.name, created: doc.created, updated: now, bg, thumb: thumbnail() },
-                      { id: doc.id, strokes, view: { ...view }, bg, showGrid });
-      askPersist();
-    } catch (e) { dirty = true; flash('No se ha podido guardar el dibujo. Guarda una copia editable por si acaso.', 6000); }
+      const tw = 360, th = Math.max(1, Math.round(tw * H / W)), c = document.createElement('canvas');
+      c.width = tw; c.height = th; c.getContext('2d').drawImage(base, 0, 0, tw, th);
+      const url = c.toDataURL('image/jpeg', 0.75); c.width = c.height = 0; return url;
+    } catch (e) { return doc.thumb || null; }
   }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushSave(); });
-  window.addEventListener('pagehide', flushSave);
+  function flushSave() {
+    clearTimeout(saveT);
+    if (!doc || (!strokesDirty && !viewDirty)) return saving || Promise.resolve();
+    const d = doc, sd = strokesDirty;
+    strokesDirty = false; viewDirty = false;
+    if (sd) d.updated = Date.now();
+    d.thumb = thumbnail();
+    const meta = { id: d.id, name: d.name, created: d.created, updated: d.updated, bg, view: { ...view }, thumb: d.thumb };
+    const data = sd ? { id: d.id, strokes: strokes.slice(), bg, showGrid } : null;
+    const prev = saving || Promise.resolve();
+    const p = prev.then(() => store.put(meta, data)).then(() => { askPersist(); }, err => {
+      if (doc === d) { if (sd) strokesDirty = true; viewDirty = true; }
+      logError('guardar: ' + (err && err.message)); flash('No se ha podido guardar el dibujo. Guarda una copia editable por si acaso.', 6000);
+    });
+    saving = p; p.then(() => { if (saving === p) saving = null; });
+    return p;
+  }
 
   // ---------- Deshacer / rehacer ----------
   const undoBtn = $('undo'), redoBtn = $('redo');
-  function pushAction(a) { undoStack.push(a); redoStack.length = 0; syncHistory(); markDirty(); }
+  function pushAction(a) { undoStack.push(a); if (undoStack.length > MAX_UNDO) undoStack.shift(); redoStack.length = 0; syncHistory(); markStrokesDirty(); }
   function syncHistory() { undoBtn.disabled = !undoStack.length; redoBtn.disabled = !redoStack.length; }
   function applyInverse(a, to) {
     if (a.type === 'add') { const i = strokes.lastIndexOf(a.s); if (i >= 0) strokes.splice(i, 1); to.push({ type: 'remove', s: a.s }); }
@@ -357,37 +445,44 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     else if (a.type === 'unclear') { strokes = []; to.push({ type: 'clear', prev: a.prev }); }
     else if (a.type === 'bg') { const cur = bg; bg = a.prev; to.push({ type: 'bg', prev: cur }); updateSwatches(); }
   }
-  function undo() { const a = undoStack.pop(); if (!a) return; applyInverse(a, redoStack); syncHistory(); render(); markDirty(); }
-  function redo() { const a = redoStack.pop(); if (!a) return; applyInverse(a, undoStack); syncHistory(); render(); markDirty(); }
+  // Pulsar muchas veces seguidas ya no acumula repintados: se agrupan en uno por fotograma.
+  function undo() { if (current || erasing) return; const a = undoStack.pop(); if (!a) return; applyInverse(a, redoStack); syncHistory(); requestFull(); markStrokesDirty(); }
+  function redo() { if (current || erasing) return; const a = redoStack.pop(); if (!a) return; applyInverse(a, undoStack); syncHistory(); requestFull(); markStrokesDirty(); }
   undoBtn.onclick = undo; redoBtn.onclick = redo;
 
   // ---------- Entrada ----------
-  const pointers = new Map();
-  let current = null, currentId = null, erasing = null, panId = null, pinch = null, spaceDown = false;
+  const pointers = new Map();   // id -> {x, y, type}
+  let current = null, currentId = null, erasing = null, eraseId = null, eraseType = null, panId = null, pinch = null, spaceDown = false;
 
   function startStroke(e) {
     const [x, y] = toWorld(e.clientX, e.clientY), pr = e.pointerType === 'pen';
     current = { c: color, w: width / view.z, pr, x0: x, y0: y, u: 0.05 / view.z,
-                pts: [0, 0, pr ? Math.round((e.pressure || 0.5) * 100) : 50], bb: [x, y, x, y] };
+                pts: [0, 0, pr ? Math.round((e.pressure || 0.5) * 100) : 50], bb: [x, y, x, y], ptype: e.pointerType };
     currentId = e.pointerId;
-    ctx.lineCap = 'round'; ctx.lineJoin = 'round'; drawStroke(current);
+    requestLive();
   }
   function extendStroke(e) {
     const evs = (e.getCoalescedEvents && e.getCoalescedEvents()) || [];
-    const s = current, n0 = s.pts.length / 3;
+    const s = current;
     for (const ev of (evs.length ? evs : [e])) {
       const [x, y] = toWorld(ev.clientX, ev.clientY), k = s.pts.length / 3 - 1;
       if (Math.hypot(x - PX(s, k), y - PY(s, k)) * view.z < 1) continue;
       s.pts.push(Math.round((x - s.x0) / s.u), Math.round((y - s.y0) / s.u), s.pr ? Math.round((ev.pressure || 0.5) * 100) : 50);
       const b = s.bb; if (x < b[0]) b[0] = x; if (y < b[1]) b[1] = y; if (x > b[2]) b[2] = x; if (y > b[3]) b[3] = y;
     }
-    if (s.pts.length / 3 > n0) { ctx.lineCap = 'round'; ctx.lineJoin = 'round'; s.pr ? drawStroke(s, n0) : scheduleRender(); }
+    requestLive();
   }
   function endStroke(cancel) {
     if (!current) return;
     const s = current; current = null; currentId = null;
-    if (!cancel) { strokes.push(s); pushAction({ type: 'add', s }); }
-    render();
+    delete s.ptype;
+    if (!cancel) {
+      s.pts = Int32Array.from(s.pts);       // más ligero de guardar y de copiar
+      strokes.push(s); pushAction({ type: 'add', s });
+      if (baseValid && !fullPending) { bctx.setTransform(dpr, 0, 0, dpr, 0, 0); bctx.lineCap = 'round'; bctx.lineJoin = 'round'; drawStroke(bctx, s, view); }
+      else requestFull();
+    }
+    requestLive();
   }
   function distToSeg(px, py, ax, ay, bx, by) {
     const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
@@ -395,6 +490,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
   }
   function eraseAt(e) {
+    eraserAt = [e.clientX, e.clientY]; requestLive();
     const [x, y] = toWorld(e.clientX, e.clientY), r = 12 / view.z; let hit = false;
     for (let i = strokes.length - 1; i >= 0; i--) {
       const s = strokes[i], b = s.bb, m = r + s.w;
@@ -405,37 +501,59 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
         if (d <= r + s.w / 2) { erasing.push({ s, i }); strokes.splice(i, 1); hit = true; break; }
       }
     }
-    if (hit) scheduleRender();
+    if (hit) requestFull();
+  }
+  function finishErase() {
+    if (erasing && erasing.length) pushAction({ type: 'erase', items: erasing });
+    erasing = null; eraseId = null; eraseType = null; eraserAt = null; requestLive();
   }
   function zoomAt(px, py, f) {
+    if (!isFinite(f) || f <= 0) return;
     const nz = Math.max(ZMIN, Math.min(ZMAX, view.z * f)); if (nz === view.z) return;
     const wx = (px - view.ox) / view.z, wy = (py - view.oy) / view.z;
     view.z = nz; view.ox = px - wx * nz; view.oy = py - wy * nz;
   }
   const touchPointers = () => [...pointers.entries()].filter(([, p]) => p.type === 'touch');
   function startPinch() {
-    const t = touchPointers(); if (t.length < 2) return;
+    const t = touchPointers(); if (t.length < 2) { pinch = null; return; }
     const a = t[0][1], b = t[1][1];
     pinch = { ids: [t[0][0], t[1][0]], mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
+  }
+  // Si el iPad "se traga" el final de un toque, la app se quedaba esperándolo y dejaba de responder.
+  // Un nuevo toque principal demuestra que los anteriores de ese tipo ya terminaron: se liberan.
+  function dropStale(type) {
+    for (const [id, p] of [...pointers]) if (p.type === type) pointers.delete(id);
+    if (current && current.ptype === type) endStroke(current.pts.length < 9);
+    if (erasing && eraseType === type) finishErase();
+    if (panId !== null && !pointers.has(panId)) panId = null;
+    if (pinch && !pinch.ids.every(id => pointers.has(id))) pinch = null;
+  }
+  function resetInteraction() {
+    if (current) endStroke(current.pts.length < 9);
+    if (erasing) finishErase();
+    pointers.clear(); pinch = null; panId = null; spaceDown = false;
+    cv.classList.toggle('panning', tool === 'hand');
+    if (doc && !baseValid) requestFull();
   }
 
   cv.addEventListener('pointerdown', e => {
     if (!doc) return;
-    e.preventDefault(); closePanels(); hint.classList.add('off');
-    cv.setPointerCapture(e.pointerId);
+    e.preventDefault(); closePanels(); hideHint();
+    if (e.isPrimary) dropStale(e.pointerType);
+    try { cv.setPointerCapture(e.pointerId); } catch (_) {}
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
     if (e.pointerType === 'pen' && !penSeen) { penSeen = true; setFinger(false); }
     if (e.pointerType === 'touch') {
       if (touchPointers().length >= 2) {
-        if (current && pointers.get(currentId)?.type === 'touch') endStroke(current.pts.length < 30);
-        if (erasing) finishErase();
+        if (current && current.ptype === 'touch') endStroke(current.pts.length < 30);
+        if (erasing && eraseType === 'touch') finishErase();
         panId = null; startPinch(); return;
       }
       if (!fingerDraw) { panId = e.pointerId; return; }
     }
     if (tool === 'hand' || spaceDown || e.button === 1 || e.button === 2) { panId = e.pointerId; cv.classList.add('panning'); return; }
-    if (current) return;
-    if (tool === 'eraser') { erasing = []; currentId = e.pointerId; eraseAt(e); return; }
+    if (current || erasing) return;
+    if (tool === 'eraser') { erasing = []; eraseId = e.pointerId; eraseType = e.pointerType; eraseAt(e); return; }
     startStroke(e);
   }, { passive: false });
 
@@ -444,35 +562,47 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     e.preventDefault();
     const dx = e.clientX - prev.x, dy = e.clientY - prev.y; prev.x = e.clientX; prev.y = e.clientY;
     if (pinch && pinch.ids.includes(e.pointerId)) {
-      const a = pointers.get(pinch.ids[0]), b = pointers.get(pinch.ids[1]); if (!a || !b) return;
+      const a = pointers.get(pinch.ids[0]), b = pointers.get(pinch.ids[1]); if (!a || !b) { pinch = null; return; }
       const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, d = Math.hypot(a.x - b.x, a.y - b.y);
       view.ox += mx - pinch.mx; view.oy += my - pinch.my;
-      if (pinch.d > 0) zoomAt(mx, my, d / pinch.d);
-      pinch.mx = mx; pinch.my = my; pinch.d = d; scheduleRender(); markDirty(); return;
+      if (pinch.d > 0 && d > 0) zoomAt(mx, my, d / pinch.d);
+      pinch.mx = mx; pinch.my = my; pinch.d = d; viewChanged(); return;
     }
-    if (panId === e.pointerId) { view.ox += dx; view.oy += dy; scheduleRender(); markDirty(); return; }
-    if (currentId === e.pointerId) { if (erasing) eraseAt(e); else if (current) extendStroke(e); }
+    if (panId === e.pointerId) { view.ox += dx; view.oy += dy; viewChanged(); return; }
+    if (currentId === e.pointerId && current) extendStroke(e);
+    else if (eraseId === e.pointerId && erasing) eraseAt(e);
   }, { passive: false });
 
-  function finishErase() { if (erasing && erasing.length) pushAction({ type: 'erase', items: erasing }); erasing = null; currentId = null; }
   function pointerEnd(e) {
+    if (!pointers.has(e.pointerId)) return;
     pointers.delete(e.pointerId);
     if (pinch && pinch.ids.includes(e.pointerId)) { pinch = null; startPinch(); }
     if (panId === e.pointerId) { panId = null; cv.classList.toggle('panning', tool === 'hand'); }
-    if (currentId === e.pointerId) { if (erasing) finishErase(); else endStroke(e.type === 'pointercancel' && current && current.pts.length < 9); }
+    if (currentId === e.pointerId) endStroke(e.type === 'pointercancel' && current && current.pts.length < 9);
+    if (eraseId === e.pointerId) finishErase();
+    if (!pinch && panId === null && !baseValid) { clearTimeout(settleT); requestFull(); }
   }
   cv.addEventListener('pointerup', pointerEnd);
   cv.addEventListener('pointercancel', pointerEnd);
+  cv.addEventListener('lostpointercapture', pointerEnd);
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('wheel', e => {
     if (!doc) return; e.preventDefault();
     if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.01));
     else { view.ox -= e.deltaX; view.oy -= e.deltaY; }
-    scheduleRender(); markDirty();
+    viewChanged();
   }, { passive: false });
-  ['gesturestart', 'gesturechange'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+  // Evita el zoom de toda la página (pellizco o doble toque) que descuadra el trazo respecto al dedo.
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
+  document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
+  let lastTouchEnd = 0;
+  document.addEventListener('touchend', e => {
+    const now = Date.now();
+    if (now - lastTouchEnd < 350 && e.target.closest && e.target.closest('button')) { e.preventDefault(); e.target.closest('button').click(); }
+    lastTouchEnd = now;
+  }, { passive: false });
 
-  // ---------- Barra y paneles del editor ----------
+  // ---------- Barra y paneles ----------
   const toolBtns = [...document.querySelectorAll('[data-tool]')], widthBtns = [...document.querySelectorAll('[data-width]')];
   const fingerBtn = $('finger'), zoomBtn = $('zoom');
   const colorBtn = $('colorBtn'), bgBtn = $('bgBtn'), saveBtn = $('saveBtn');
@@ -489,9 +619,10 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     [...inkGrid.children].forEach(b => b.setAttribute('aria-pressed', b.dataset.c.toLowerCase() === color.toLowerCase()));
     [...bgGrid.children].forEach(b => b.setAttribute('aria-pressed', b.dataset.c.toLowerCase() === bg.toLowerCase()));
     gridToggle.setAttribute('aria-pressed', showGrid); gridToggle.textContent = showGrid ? 'Visibles' : 'Ocultos';
+    document.body.style.background = doc ? bg : '';
   }
   function setColor(c) { color = c; if (tool !== 'pen') setTool('pen'); updateSwatches(); }
-  function setBg(c) { if (c === bg) return; pushAction({ type: 'bg', prev: bg }); bg = c; updateSwatches(); render(); }
+  function setBg(c) { if (c === bg) return; pushAction({ type: 'bg', prev: bg }); bg = c; updateSwatches(); requestFull(); }
 
   INKS.forEach(c => { const b = document.createElement('button'); b.dataset.c = c; b.style.setProperty('--c', c); b.setAttribute('aria-label', 'Color ' + c);
     b.onclick = () => { setColor(c); closePanels(); }; inkGrid.appendChild(b); });
@@ -499,30 +630,37 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     b.onclick = () => setBg(c); bgGrid.appendChild(b); });
   $('inkCustom').addEventListener('input', e => setColor(e.target.value));
   $('bgCustom').addEventListener('change', e => setBg(e.target.value));
-  gridToggle.onclick = () => { showGrid = !showGrid; updateSwatches(); render(); markDirty(); };
+  gridToggle.onclick = () => { showGrid = !showGrid; updateSwatches(); requestFull(); markStrokesDirty(); };
   colorBtn.onclick = () => togglePanel(colorPanel, colorBtn);
   bgBtn.onclick = () => togglePanel(bgPanel, bgBtn);
   saveBtn.onclick = () => togglePanel(savePanel, saveBtn);
   toolBtns.forEach(b => b.onclick = () => { setTool(b.dataset.tool); closePanels(); });
   widthBtns.forEach(b => b.onclick = () => { width = +b.dataset.width; widthBtns.forEach(x => x.setAttribute('aria-pressed', x === b)); if (tool !== 'pen') setTool('pen'); closePanels(); });
   fingerBtn.onclick = () => setFinger(!fingerDraw);
-  zoomBtn.onclick = () => { view = { ox: W / 2, oy: H / 2, z: 1 }; render(); markDirty(); };
+  zoomBtn.onclick = () => { view = { ox: W / 2, oy: H / 2, z: 1 }; markViewDirty(); renderBase(); };
   $('clear').onclick = () => {
+    resetInteraction();
     if (!strokes.length) return;
     if (!confirm('¿Borrar todo este dibujo? Puedes recuperarlo con Deshacer mientras no salgas.')) return;
-    pushAction({ type: 'clear', prev: strokes }); strokes = []; render();
+    pushAction({ type: 'clear', prev: strokes }); strokes = []; requestFull();
   };
-  $('backBtn').onclick = async () => { closePanels(); await flushSave(); showGallery(); };
+  // Salir nunca espera más de dos segundos: el guardado sigue en segundo plano.
+  $('backBtn').onclick = async () => {
+    closePanels(); resetInteraction();
+    if (!baseValid) renderBase();
+    await Promise.race([flushSave(), sleep(2000)]);
+    showGallery();
+  };
 
   // ---------- Descargas ----------
-  const slug = s => (s || 'dibujo').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'dibujo';
+  const slug = s => (s || 'dibujo').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'dibujo';
   const today = () => new Date().toISOString().slice(0, 10);
   function dataURLtoBlob(d) {
     const [h, b] = d.split(','), mime = h.match(/:(.*?);/)[1], bin = atob(b), arr = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
     return new Blob([arr], { type: mime });
   }
-  // Se llama directamente desde el toque del usuario (sin esperas) para que el iPad permita abrir el menú de compartir.
+  // Se llama directamente desde el toque (sin esperas) para que el iPad permita abrir el menú de compartir.
   function deliver(blob, filename) {
     const file = new File([blob], filename, { type: blob.type });
     if (isTouchDevice && navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -535,33 +673,36 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename;
     document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000);
   }
+  const plain = (k, v) => ArrayBuffer.isView(v) ? Array.from(v) : v;
   function backupBlob(name, data) {
     return new Blob([JSON.stringify({ format: FORMAT, version: FORMAT_VERSION, name, exported: new Date().toISOString(),
-      bg: data.bg, showGrid: data.showGrid, view: data.view, strokes: data.strokes })], { type: 'application/json' });
+      bg: data.bg, showGrid: data.showGrid, view: data.view, strokes: data.strokes }, plain)], { type: 'application/json' });
   }
   $('saveImage').onclick = () => {
-    closePanels();
+    closePanels(); resetInteraction();
     const scale = Math.max(dpr, Math.min(3, 4096 / Math.max(W, H)));
     const c = document.createElement('canvas'); c.width = Math.round(W * scale); c.height = Math.round(H * scale);
-    renderScene(c.getContext('2d'), W, H, scale, view, false, strokes, null);
-    deliver(dataURLtoBlob(c.toDataURL('image/png')), slug(doc.name) + '-' + today() + '.png');
+    paintScene(c.getContext('2d'), W, H, scale, view, false, strokes);
+    const blob = dataURLtoBlob(c.toDataURL('image/png')); c.width = c.height = 0;   // libera la memoria del iPad
+    deliver(blob, slug(doc.name) + '-' + today() + '.png');
   };
   $('saveBackup').onclick = () => {
-    closePanels();
+    closePanels(); resetInteraction();
     deliver(backupBlob(doc.name, { bg, showGrid, view, strokes }), slug(doc.name) + '-' + today() + '.json');
   };
 
   // ---------- Validación de copias importadas ----------
   const fin = n => typeof n === 'number' && isFinite(n);
+  const validView = v => v && fin(v.ox) && fin(v.oy) && fin(v.z) && v.z > 0;
   function validBackup(d) {
     if (!d || d.format !== FORMAT || !Array.isArray(d.strokes) || d.strokes.length > 200000) return false;
-    if (d.view && !(fin(d.view.ox) && fin(d.view.oy) && fin(d.view.z) && d.view.z > 0)) return false;
+    if (d.view && !validView(d.view)) return false;
     for (const s of d.strokes) {
       if (!s || typeof s.c !== 'string' || !/^#[0-9a-f]{6}$/i.test(s.c)) return false;
       if (!fin(s.w) || s.w <= 0 || !fin(s.x0) || !fin(s.y0) || !fin(s.u) || s.u <= 0) return false;
       if (!Array.isArray(s.pts) || !s.pts.length || s.pts.length % 3 || !s.pts.every(fin)) return false;
       if (!Array.isArray(s.bb) || s.bb.length !== 4 || !s.bb.every(fin)) return false;
-      s.pr = !!s.pr;
+      s.pr = !!s.pr; s.pts = Int32Array.from(s.pts);
     }
     return true;
   }
@@ -573,11 +714,22 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   $('installNote').hidden = standalone || !isTouchDevice;
 
+  function renderFoot() {
+    let txt = 'Versión ' + APP_VERSION;
+    try {
+      const l = JSON.parse(localStorage.getItem('lienzo-errors') || '[]');
+      if (l.length) txt += ' · Último error registrado (' + dateFmt.format(new Date(l[0].t)) + '): ' + l[0].m;
+    } catch (e) {}
+    $('foot').textContent = txt;
+  }
+
   async function showGallery() {
-    doc = null; strokes = []; current = null;
-    gallery.hidden = false;
+    doc = null; strokes = []; current = null; erasing = null; baseView = null; baseValid = false;
+    base.style.transform = ''; document.body.style.background = '';
+    gallery.hidden = false; renderFoot();
     let list = [];
-    try { list = await store.list(); } catch (e) {}
+    try { list = await store.list(); } catch (e) { logError('listar: ' + e.message); flash('No se han podido cargar los dibujos. Cierra la app y vuelve a abrirla.', 6000); }
+    if (doc) return;   // se abrió un dibujo mientras tanto
     list.sort((a, b) => b.updated - a.updated);
     cards.textContent = '';
     empty.hidden = list.length > 0;
@@ -600,7 +752,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   }
   function openSheet(m) {
     sheetMeta = m; sheetData = null; $('cardSheetTitle').textContent = m.name; sheet.classList.add('open');
-    store.get(m.id).then(d => { if (sheetMeta === m) sheetData = d; }).catch(() => {});   // precarga para poder compartir al instante
+    store.get(m.id).then(d => { if (sheetMeta === m && d) sheetData = { ...d, view: m.view || d.view }; }).catch(() => {});
   }
   const closeSheet = () => { sheet.classList.remove('open'); sheetMeta = null; sheetData = null; };
   sheet.addEventListener('click', e => { if (e.target === sheet) closeSheet(); });
@@ -609,7 +761,8 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     const m = sheetMeta; if (!m) return;
     const n = prompt('Nombre del dibujo', m.name); if (n === null) return;
     const name = n.trim().slice(0, 60) || m.name; closeSheet();
-    await store.put({ ...m, name }); showGallery();
+    try { await store.put({ ...m, name }); } catch (e) { flash('No se ha podido cambiar el nombre.'); }
+    showGallery();
   };
   $('actBackup').onclick = () => {
     if (!sheetMeta) return;
@@ -619,7 +772,9 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   $('actDelete').onclick = async () => {
     const m = sheetMeta; if (!m) return;
     if (!confirm('¿Borrar "' + m.name + '" para siempre? Esto no se puede deshacer.')) return;
-    closeSheet(); await store.del(m.id); showGallery();
+    closeSheet();
+    try { await store.del(m.id); } catch (e) { flash('No se ha podido borrar.'); }
+    showGallery();
   };
 
   async function nextName() {
@@ -629,21 +784,25 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     return 'Dibujo ' + n;
   }
   $('newBtn').onclick = async () => {
-    const id = newId(), now = Date.now();
-    startEditing({ id, name: await nextName(), created: now }, { strokes: [], view: { ox: W / 2, oy: H / 2, z: 1 }, bg: '#F4F5F2', showGrid: true });
-    markDirty(); flushSave();
+    const now = Date.now();
+    startEditing({ id: newId(), name: await nextName(), created: now, updated: now, thumb: null },
+                 { strokes: [], bg: '#F4F5F2', showGrid: true }, { ox: W / 2, oy: H / 2, z: 1 });
+    markStrokesDirty();
     flash(fingerDraw ? 'Dibuja con el lápiz o el dedo. Dos dedos para moverte y hacer zoom.' : 'Dibuja con el lápiz. Dos dedos para moverte y hacer zoom.', 5000);
   };
   async function openDrawing(id) {
     let data = null, meta = null;
-    try { data = await store.get(id); meta = (await store.list()).find(m => m.id === id); } catch (e) {}
-    if (!data || !meta) { flash('No se ha podido abrir este dibujo.'); return; }
-    startEditing({ id, name: meta.name, created: meta.created }, data);
+    try { [data, meta] = await Promise.all([store.get(id), store.getMeta(id)]); } catch (e) { logError('abrir: ' + e.message); }
+    if (!data || !meta) { flash('No se ha podido abrir este dibujo. Prueba otra vez.'); return; }
+    startEditing({ id, name: meta.name, created: meta.created, updated: meta.updated, thumb: meta.thumb }, data, meta.view || data.view);
   }
-  function startEditing(d, data) {
-    doc = d; strokes = data.strokes || []; view = data.view || { ox: W / 2, oy: H / 2, z: 1 };
+  function startEditing(d, data, v) {
+    doc = d; strokes = Array.isArray(data.strokes) ? data.strokes : [];
+    view = validView(v) ? { ox: v.ox, oy: v.oy, z: v.z } : { ox: W / 2, oy: H / 2, z: 1 };
     bg = data.bg || '#F4F5F2'; showGrid = data.showGrid !== false;
-    undoStack.length = 0; redoStack.length = 0; syncHistory(); current = null; dirty = false;
+    undoStack.length = 0; redoStack.length = 0; syncHistory();
+    current = null; erasing = null; pointers.clear(); pinch = null; panId = null;
+    strokesDirty = false; viewDirty = false;
     setTool('pen'); setFinger(fingerDraw); updateSwatches(); closePanels();
     gallery.hidden = true; resize();
   }
@@ -656,13 +815,14 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     if (f.size > 60 * 1024 * 1024) { flash('Ese archivo es demasiado grande.'); return; }
     let d; try { d = JSON.parse(await f.text()); } catch (err) { d = null; }
     if (!validBackup(d)) { flash('Ese archivo no es una copia de Lienzo infinito.'); return; }
-    const id = newId(), now = Date.now();
+    const now = Date.now();
     const name = (typeof d.name === 'string' && d.name.trim() ? d.name.trim().slice(0, 50) : 'Dibujo') + ' (copia)';
-    startEditing({ id, name, created: now }, { strokes: d.strokes, view: d.view, bg: /^#[0-9a-f]{6}$/i.test(d.bg) ? d.bg : '#F4F5F2', showGrid: d.showGrid !== false });
-    markDirty(); await flushSave(); flash('Copia abierta como "' + name + '".');
+    startEditing({ id: newId(), name, created: now, updated: now, thumb: null },
+                 { strokes: d.strokes, bg: /^#[0-9a-f]{6}$/i.test(d.bg) ? d.bg : '#F4F5F2', showGrid: d.showGrid !== false }, d.view);
+    markStrokesDirty(); flash('Copia abierta como "' + name + '".');
   });
 
-  // ---------- Teclado y arranque ----------
+  // ---------- Teclado, ciclo de vida y arranque ----------
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape') { closePanels(); closeSheet(); }
     if (!doc || e.target.tagName === 'INPUT') return;
@@ -674,7 +834,12 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   });
   window.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; cv.classList.toggle('panning', tool === 'hand'); } });
   window.addEventListener('resize', resize);
+  // Al salir de la app o cambiar de app, se cierra cualquier gesto a medias y se guarda.
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { resetInteraction(); flushSave(); } });
+  window.addEventListener('pagehide', () => { resetInteraction(); flushSave(); });
+  window.addEventListener('blur', () => { if (doc) resetInteraction(); });
 
+  if (!store.persistent) flash('Este navegador no permite guardar: los dibujos se perderán al cerrar.', 6000);
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(() => {});
   resize(); showGallery();
 })();
