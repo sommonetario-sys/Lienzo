@@ -93,6 +93,10 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 .card .name{font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card .date{font-size:13px;color:var(--muted)}
 .foot{margin-top:40px;font-size:12px;color:var(--muted);line-height:1.5;-webkit-user-select:text;user-select:text}
+.shapes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.shapes button{width:100%;height:auto;padding:12px 6px;display:flex;flex-direction:column;align-items:center;gap:6px;border:1px solid var(--bar-line);font-size:14px}
+.shapes svg.i{width:32px;height:32px}
+.tip{font-size:13px;color:var(--muted);margin:10px 0 0;line-height:1.4}
 .empty{text-align:center;padding:60px 20px;color:var(--muted);font-size:16px;line-height:1.5}
 .sheet{position:fixed;inset:0;z-index:30;background:rgba(10,15,12,.35);display:none;align-items:flex-end;justify-content:center;
   padding:0 8px calc(env(safe-area-inset-bottom,0px) + 8px)}
@@ -152,6 +156,16 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   <div class="row"><span>Puntos de guía</span><button class="toggle" id="gridToggle" aria-pressed="true">Visibles</button></div>
 </div>
 
+<div class="panel" id="shapePanel" role="dialog" aria-label="Formas">
+  <h2>Formas</h2>
+  <div class="shapes">
+    <button data-shape="line" aria-pressed="false"><svg class="i" viewBox="0 0 24 24"><path d="M5 19L19 5"/></svg>Recta</button>
+    <button data-shape="rect" aria-pressed="false"><svg class="i" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="12" rx="1"/></svg>Rectángulo</button>
+    <button data-shape="ellipse" aria-pressed="false"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>Círculo</button>
+  </div>
+  <p class="tip">Arrastra para dibujar. Si la haces casi recta, casi cuadrada o casi redonda, se ajusta sola.</p>
+</div>
+
 <div class="panel" id="savePanel" role="dialog" aria-label="Guardar">
   <h2>Guardar</h2>
   <button class="action" id="saveImage"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 16l5-5 4 4 3-3 6 6"/><circle cx="16" cy="9" r="1.5"/></svg>
@@ -166,8 +180,10 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   <div class="sep"></div>
   <button data-tool="pen" aria-pressed="true" aria-label="Lápiz" title="Lápiz (P)">
     <svg class="i" viewBox="0 0 24 24"><path d="M4 20l1-4L16 5l3 3L8 19z"/><path d="M14 7l3 3"/></svg></button>
-  <button data-tool="eraser" aria-pressed="false" aria-label="Borrador" title="Borrador (E)">
+  <button data-tool="eraser" aria-pressed="false" aria-label="Goma" title="Goma (E)">
     <svg class="i" viewBox="0 0 24 24"><path d="M8 20h12"/><path d="M5 15l9-9 5 5-8 8H8z"/><path d="M10 10l5 5"/></svg></button>
+  <button id="shapeBtn" aria-pressed="false" aria-expanded="false" aria-label="Formas: recta, rectángulo o círculo" title="Formas">
+    <svg class="i" viewBox="0 0 24 24" id="shapeIcon"></svg></button>
   <button data-tool="hand" aria-pressed="false" aria-label="Mover lienzo" title="Mover (H o espacio)">
     <svg class="i" viewBox="0 0 24 24"><path d="M8 12V6a1.5 1.5 0 013 0v5M11 11V4.5a1.5 1.5 0 013 0V11M14 11V6a1.5 1.5 0 013 0v7c0 4-2.5 7-6 7-2.5 0-4-1.2-5.5-3.5L4 13.5a1.5 1.5 0 012.5-1.6L8 14"/></svg></button>
   <div class="sep"></div>
@@ -203,18 +219,23 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
 
 (() => {
   'use strict';
-  const APP_VERSION = '4';
+  const APP_VERSION = '5';
   const $ = id => document.getElementById(id);
   const logError = window.__logError;
   const base = $('base'), bctx = base.getContext('2d');   // capa con el dibujo ya hecho
   const cv = $('cv'), lctx = cv.getContext('2d');         // capa del trazo en curso (recibe los toques)
-  const ZMIN = 1e-6, ZMAX = 1e10, MAX_UNDO = 300;
-  const FORMAT = 'lienzo-infinito', FORMAT_VERSION = 1;
+  const ZMIN = 1e-6, ZMAX = 1e10, MAX_UNDO = 200, TAU = Math.PI * 2;
+  const FORMAT = 'lienzo-infinito', FORMAT_VERSION = 2;
   const INKS = ['#000000','#5B5F63','#A3A8AD','#FFFFFF','#7A1E1E','#D7263D','#FF6F59','#FF9F1C',
                 '#FFD23F','#C9E265','#3BB273','#1B7F5B','#2EC4B6','#3A86FF','#1D3F9E','#6A4C93',
                 '#B47AEA','#FF5DA2','#F7B2C8','#8D5524','#C68642','#E0AC69','#F1C27D','#FFE0BD'];
   const BGS  = ['#FFFFFF','#F4F5F2','#FBF3DE','#FFF6B8','#FDE2E4','#E3F2E8','#DCEEFB','#E8E1F5',
                 '#D7C4A3','#B8C4CC','#2F4F3E','#1E2A44','#3B2F2F','#2B2B2B','#111418','#000000'];
+  const SHAPE_ICONS = {
+    line: '<path d="M5 19L19 5"/>',
+    rect: '<rect x="4" y="6" width="16" height="12" rx="1"/>',
+    ellipse: '<circle cx="12" cy="12" r="8"/>'
+  };
   const isTouchDevice = matchMedia('(pointer: coarse)').matches;
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   let dpr = 1, W = 0, H = 0;
@@ -275,26 +296,83 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   // ---------- Estado ----------
   let doc = null;              // {id, name, created, updated, thumb}
   let strokes = [], view = { ox: 0, oy: 0, z: 1 }, bg = '#F4F5F2', showGrid = true;
-  let tool = 'pen', color = '#000000', width = 5, fingerDraw = true, penSeen = false;
+  let tool = 'pen', color = '#000000', width = 5, fingerDraw = true, penSeen = false, shapeKind = 'line';
   const undoStack = [], redoStack = [];
   try { const p = JSON.parse(localStorage.getItem('lienzo-prefs') || '{}'); penSeen = !!p.penSeen; fingerDraw = p.fingerDraw !== false; } catch (e) {}
   const savePrefs = () => { try { localStorage.setItem('lienzo-prefs', JSON.stringify({ penSeen, fingerDraw })); } catch (e) {} };
 
-  // ---------- Dibujo ----------
-  // Trazo: {c, w (grosor en mundo), pr (presión), x0, y0, u (resolución), pts:[ix,iy,p%,...], bb:[x0,y0,x1,y1]}
+  // ---------- Geometría ----------
+  // Tipos de trazo:
+  //  · a mano (sin k): {c, w, pr, x0, y0, u, pts:[ix,iy,presión,...], bb}
+  //  · recta/rectángulo (k:'l'): igual, pero se une con líneas rectas, sin suavizar
+  //  · círculo/óvalo (k:'e'): {c, w, cx, cy, rx, ry, a0, a1, bb}; se guarda como curva exacta (nítida a cualquier zoom)
   function lum(hex) { const n = parseInt(hex.slice(1), 16); return (0.2126 * (n >> 16) + 0.7152 * (n >> 8 & 255) + 0.0722 * (n & 255)) / 255; }
   const toWorld = (x, y) => [(x - view.ox) / view.z, (y - view.oy) / view.z];
   const PX = (s, i) => s.x0 + s.pts[i * 3] * s.u;
   const PY = (s, i) => s.y0 + s.pts[i * 3 + 1] * s.u;
 
-  // Dibuja un trazo en pantalla. Omite puntos que caen a menos de ~1 píxel entre sí y agrupa
-  // los segmentos de grosor parecido en un solo camino: eso es lo que mantiene la fluidez con dibujos grandes.
+  // Tramos del arco [a0,a1] de una elipse que quedan dentro del círculo (px,py,R).
+  // Se usa para borrar trozos de círculos y para dibujar solo la parte visible cuando se amplía mucho.
+  function ellipseIntervals(e, a0, a1, px, py, R) {
+    const span = a1 - a0; if (!(span > 0)) return [];
+    const R2 = R * R;
+    const f = t => { const x = e.cx + e.rx * Math.cos(t) - px, y = e.cy + e.ry * Math.sin(t) - py; return x * x + y * y - R2; };
+    const N = Math.max(16, Math.ceil(256 * span / TAU));
+    const ts = new Float64Array(N + 1), fs = new Float64Array(N + 1);
+    for (let i = 0; i <= N; i++) { ts[i] = i === N ? a1 : a0 + span * i / N; fs[i] = f(ts[i]); }
+    const L = [];
+    for (let i = 0; i <= N; i++) {
+      L.push({ t: ts[i], in: fs[i] < 0 });
+      const fl = i > 0 ? fs[i - 1] : Infinity, fr = i < N ? fs[i + 1] : Infinity;
+      if (fs[i] >= 0 && fs[i] <= fl && fs[i] <= fr) {   // posible roce entre dos muestras: se busca el punto más cercano
+        let lo = ts[Math.max(0, i - 1)], hi = ts[Math.min(N, i + 1)];
+        for (let k = 0; k < 60; k++) { const m1 = lo + (hi - lo) / 3, m2 = hi - (hi - lo) / 3; if (f(m1) < f(m2)) hi = m2; else lo = m1; }
+        const tm = (lo + hi) / 2;
+        if (f(tm) < 0) L.push({ t: tm, in: true });
+      }
+    }
+    L.sort((a, b) => a.t - b.t);
+    const cross = (lo, hi, loIn) => { for (let k = 0; k < 60; k++) { const m = (lo + hi) / 2; if ((f(m) < 0) === loIn) lo = m; else hi = m; } return (lo + hi) / 2; };
+    const res = []; let start = L[0].in ? L[0].t : null;
+    for (let k = 1; k < L.length; k++) {
+      const A = L[k - 1], B = L[k];
+      if (A.in !== B.in) { const tc = cross(A.t, B.t, A.in); if (B.in) start = tc; else { res.push([start, tc]); start = null; } }
+    }
+    if (start !== null) res.push([start, L[L.length - 1].t]);
+    return res;
+  }
+
+  // ---------- Dibujo ----------
+  let sceneDims = null;   // tamaño de la escena cuando se pinta una exportación
+  function drawEllipse(c, s, v) {
+    const z = v.z, rho = Math.max(s.rx, s.ry) * z;
+    c.strokeStyle = s.c; c.lineWidth = Math.max(0.35, s.w * z);
+    if (rho < 20000) {
+      c.beginPath(); c.ellipse(s.cx * z + v.ox, s.cy * z + v.oy, Math.max(1e-3, s.rx * z), Math.max(1e-3, s.ry * z), 0, s.a0, s.a1); c.stroke(); return;
+    }
+    // Ampliado muchísimo: se calcula solo el trozo visible con precisión doble, para que la curva siga siendo exacta.
+    const sw = sceneDims ? sceneDims[0] : W, sh = sceneDims ? sceneDims[1] : H;
+    const vx = (sw / 2 - v.ox) / z, vy = (sh / 2 - v.oy) / z, R = (Math.hypot(sw, sh) / 2 + s.w * z + 4) / z;
+    const step = Math.min(0.05, Math.sqrt(1 / rho));
+    for (const [t0, t1] of ellipseIntervals(s, s.a0, s.a1, vx, vy, R)) {
+      const n = Math.min(50000, Math.max(2, Math.ceil((t1 - t0) / step)));
+      c.beginPath();
+      for (let i = 0; i <= n; i++) {
+        const t = t0 + (t1 - t0) * i / n, x = (s.cx + s.rx * Math.cos(t)) * z + v.ox, y = (s.cy + s.ry * Math.sin(t)) * z + v.oy;
+        if (i) c.lineTo(x, y); else c.moveTo(x, y);
+      }
+      c.stroke();
+    }
+  }
+
+  // Dibuja un trazo en pantalla. Omite puntos a menos de ~1 píxel entre sí y agrupa segmentos de grosor parecido.
   function drawStroke(c, s, v) {
+    if (s.k === 'e') { drawEllipse(c, s, v); return; }
     const p = s.pts, n = p.length / 3, z = v.z, ox = v.ox, oy = v.oy, x0 = s.x0, y0 = s.y0, u = s.u;
     c.strokeStyle = c.fillStyle = s.c;
     if (n === 1) {
       const r = Math.max(0.35, s.w * (s.pr ? 0.3 + p[2] / 100 : 1) * z) / 2;
-      c.beginPath(); c.arc((x0 + p[0] * u) * z + ox, (y0 + p[1] * u) * z + oy, r, 0, Math.PI * 2); c.fill(); return;
+      c.beginPath(); c.arc((x0 + p[0] * u) * z + ox, (y0 + p[1] * u) * z + oy, r, 0, TAU); c.fill(); return;
     }
     if (!s.pr) {
       const q = [(x0 + p[0] * u) * z + ox, (y0 + p[1] * u) * z + oy];
@@ -307,7 +385,8 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
       const m = q.length / 2;
       c.lineWidth = Math.max(0.35, s.w * z);
       c.beginPath(); c.moveTo(q[0], q[1]);
-      for (let i = 1; i < m; i++) {
+      if (s.k === 'l') { for (let i = 1; i < m; i++) c.lineTo(q[i * 2], q[i * 2 + 1]); }
+      else for (let i = 1; i < m; i++) {
         if (i < m - 1) c.quadraticCurveTo(q[i * 2], q[i * 2 + 1], (q[i * 2] + q[i * 2 + 2]) / 2, (q[i * 2 + 1] + q[i * 2 + 3]) / 2);
         else c.lineTo(q[i * 2], q[i * 2 + 1]);
       }
@@ -328,6 +407,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   }
 
   function paintScene(c, w, h, scale, v, grid, list) {
+    sceneDims = [w, h];
     c.setTransform(scale, 0, 0, scale, 0, 0);
     c.fillStyle = bg; c.fillRect(0, 0, w, h);
     if (grid) {
@@ -347,9 +427,10 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
       if (Math.max(b[2] - b[0] + s.w, b[3] - b[1] + s.w) * v.z < 0.4) continue;
       drawStroke(c, s, v);
     }
+    sceneDims = null;
   }
 
-  // Capa base: se repinta entera solo cuando hace falta (deshacer, borrar, fin de zoom), nunca por cada movimiento.
+  // Capa base: se repinta entera solo cuando hace falta (deshacer, fin de borrado, fin de zoom), nunca por cada movimiento.
   let baseView = null, baseValid = false, fullPending = false, lastRenderMs = 0, settleT = null;
   function renderBase() {
     const t0 = performance.now();
@@ -362,10 +443,9 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   function requestFull() {
     if (fullPending) return;
     fullPending = true;
-    const wait = lastRenderMs > 30 ? Math.min(300, lastRenderMs) : 0;   // si el dibujo es pesado, deja respirar a la tablet
+    const wait = lastRenderMs > 30 ? Math.min(300, lastRenderMs) : 0;
     setTimeout(() => requestAnimationFrame(() => { fullPending = false; if (doc) renderBase(); }), wait);
   }
-  // Durante el zoom o el desplazamiento se mueve la imagen ya pintada; al parar se repinta con nitidez.
   function viewChanged() {
     zoomBtn.textContent = zoomLabel(view.z);
     markViewDirty();
@@ -375,16 +455,21 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     baseValid = false;
     clearTimeout(settleT); settleT = setTimeout(requestFull, 150);
   }
+  function drawOnBase(s) {
+    if (baseValid && !fullPending) { bctx.setTransform(dpr, 0, 0, dpr, 0, 0); bctx.lineCap = 'round'; bctx.lineJoin = 'round'; drawStroke(bctx, s, view); }
+    else requestFull();
+  }
 
   let liveQueued = false, eraserAt = null;
   function requestLive() { if (liveQueued) return; liveQueued = true; requestAnimationFrame(() => { liveQueued = false; drawLive(); }); }
   function drawLive() {
     lctx.setTransform(dpr, 0, 0, dpr, 0, 0); lctx.clearRect(0, 0, W, H);
     lctx.lineCap = 'round'; lctx.lineJoin = 'round';
-    if (current && doc) drawStroke(lctx, current, view);
+    if (doc && current) drawStroke(lctx, current, view);
+    if (doc && shaping && shaping.s) drawStroke(lctx, shaping.s, view);
     if (eraserAt) {
       lctx.lineWidth = 1.5; lctx.strokeStyle = lum(bg) > 0.5 ? 'rgba(0,0,0,.45)' : 'rgba(255,255,255,.6)';
-      lctx.beginPath(); lctx.arc(eraserAt[0], eraserAt[1], 12, 0, Math.PI * 2); lctx.stroke();
+      lctx.beginPath(); lctx.arc(eraserAt[0], eraserAt[1], eraserPx(), 0, TAU); lctx.stroke();
     }
   }
 
@@ -402,7 +487,6 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   }
 
   // ---------- Guardado automático ----------
-  // Se guarda en segundo plano, sin repintar el dibujo, y nunca bloquea la salida a la galería.
   let saveT = null, strokesDirty = false, viewDirty = false, saving = null;
   function markStrokesDirty() { strokesDirty = true; clearTimeout(saveT); saveT = setTimeout(flushSave, 1200); }
   function markViewDirty() { viewDirty = true; if (!strokesDirty) { clearTimeout(saveT); saveT = setTimeout(flushSave, 1500); } }
@@ -439,20 +523,17 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   function applyInverse(a, to) {
     if (a.type === 'add') { const i = strokes.lastIndexOf(a.s); if (i >= 0) strokes.splice(i, 1); to.push({ type: 'remove', s: a.s }); }
     else if (a.type === 'remove') { strokes.push(a.s); to.push({ type: 'add', s: a.s }); }
-    else if (a.type === 'erase') { a.items.slice().sort((x, y) => x.i - y.i).forEach(it => strokes.splice(Math.min(it.i, strokes.length), 0, it.s)); to.push({ type: 'unerase', items: a.items }); }
-    else if (a.type === 'unerase') { a.items.forEach(it => { const i = strokes.indexOf(it.s); if (i >= 0) strokes.splice(i, 1); }); to.push({ type: 'erase', items: a.items }); }
-    else if (a.type === 'clear') { strokes = a.prev; to.push({ type: 'unclear', prev: a.prev }); }
-    else if (a.type === 'unclear') { strokes = []; to.push({ type: 'clear', prev: a.prev }); }
+    else if (a.type === 'swap') { const cur = strokes; strokes = a.prev; to.push({ type: 'swap', prev: cur }); }   // borrar con la goma o borrar todo
     else if (a.type === 'bg') { const cur = bg; bg = a.prev; to.push({ type: 'bg', prev: cur }); updateSwatches(); }
   }
-  // Pulsar muchas veces seguidas ya no acumula repintados: se agrupan en uno por fotograma.
-  function undo() { if (current || erasing) return; const a = undoStack.pop(); if (!a) return; applyInverse(a, redoStack); syncHistory(); requestFull(); markStrokesDirty(); }
-  function redo() { if (current || erasing) return; const a = redoStack.pop(); if (!a) return; applyInverse(a, undoStack); syncHistory(); requestFull(); markStrokesDirty(); }
+  const busy = () => current || erasing || shaping;
+  function undo() { if (busy()) return; const a = undoStack.pop(); if (!a) return; applyInverse(a, redoStack); syncHistory(); requestFull(); markStrokesDirty(); }
+  function redo() { if (busy()) return; const a = redoStack.pop(); if (!a) return; applyInverse(a, undoStack); syncHistory(); requestFull(); markStrokesDirty(); }
   undoBtn.onclick = undo; redoBtn.onclick = redo;
 
-  // ---------- Entrada ----------
+  // ---------- Lápiz ----------
   const pointers = new Map();   // id -> {x, y, type}
-  let current = null, currentId = null, erasing = null, eraseId = null, eraseType = null, panId = null, pinch = null, spaceDown = false;
+  let current = null, currentId = null, erasing = null, shaping = null, panId = null, pinch = null, spaceDown = false;
 
   function startStroke(e) {
     const [x, y] = toWorld(e.clientX, e.clientY), pr = e.pointerType === 'pen';
@@ -476,37 +557,130 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     if (!current) return;
     const s = current; current = null; currentId = null;
     delete s.ptype;
-    if (!cancel) {
-      s.pts = Int32Array.from(s.pts);       // más ligero de guardar y de copiar
-      strokes.push(s); pushAction({ type: 'add', s });
-      if (baseValid && !fullPending) { bctx.setTransform(dpr, 0, 0, dpr, 0, 0); bctx.lineCap = 'round'; bctx.lineJoin = 'round'; drawStroke(bctx, s, view); }
-      else requestFull();
+    if (!cancel) { s.pts = Int32Array.from(s.pts); strokes.push(s); pushAction({ type: 'add', s }); drawOnBase(s); }
+    requestLive();
+  }
+
+  // ---------- Formas: recta, rectángulo, círculo ----------
+  function polyStroke(screenPts) {
+    const wp = screenPts.map(([x, y]) => toWorld(x, y));
+    const x0 = wp[0][0], y0 = wp[0][1], u = 0.05 / view.z, pts = new Int32Array(wp.length * 3), bb = [x0, y0, x0, y0];
+    wp.forEach(([x, y], i) => {
+      pts[i * 3] = Math.round((x - x0) / u); pts[i * 3 + 1] = Math.round((y - y0) / u); pts[i * 3 + 2] = 50;
+      if (x < bb[0]) bb[0] = x; if (y < bb[1]) bb[1] = y; if (x > bb[2]) bb[2] = x; if (y > bb[3]) bb[3] = y;
+    });
+    return { k: 'l', c: color, w: width / view.z, pr: false, x0, y0, u, pts, bb };
+  }
+  // Ajuste automático: casi horizontal/vertical/45° → recta exacta; casi cuadrado → cuadrado; casi redondo → círculo.
+  function shapeFrom(kind, sx, sy, ex, ey) {
+    let dx = ex - sx, dy = ey - sy;
+    if (kind === 'line') {
+      const len = Math.hypot(dx, dy), ang = Math.atan2(dy, dx), snap = Math.round(ang / (Math.PI / 4)) * (Math.PI / 4);
+      if (Math.abs(ang - snap) < 7 * Math.PI / 180) { dx = Math.cos(snap) * len; dy = Math.sin(snap) * len; }
+      return polyStroke([[sx, sy], [sx + dx, sy + dy]]);
+    }
+    const ax = Math.abs(dx), ay = Math.abs(dy);
+    if (Math.min(ax, ay) >= 0.88 * Math.max(ax, ay)) { const m = Math.max(ax, ay); dx = (dx < 0 ? -1 : 1) * m; dy = (dy < 0 ? -1 : 1) * m; }
+    if (kind === 'rect') { const x1 = sx + dx, y1 = sy + dy; return polyStroke([[sx, sy], [x1, sy], [x1, y1], [sx, y1], [sx, sy]]); }
+    const [wx0, wy0] = toWorld(sx, sy), [wx1, wy1] = toWorld(sx + dx, sy + dy);
+    const cx = (wx0 + wx1) / 2, cy = (wy0 + wy1) / 2, rx = Math.abs(wx1 - wx0) / 2, ry = Math.abs(wy1 - wy0) / 2;
+    return { k: 'e', c: color, w: width / view.z, pr: false, cx, cy, rx, ry, a0: 0, a1: TAU, bb: [cx - rx, cy - ry, cx + rx, cy + ry] };
+  }
+  function startShape(e) { shaping = { id: e.pointerId, ptype: e.pointerType, sx: e.clientX, sy: e.clientY, ex: e.clientX, ey: e.clientY, s: null }; }
+  function moveShape(e) { shaping.ex = e.clientX; shaping.ey = e.clientY; shaping.s = shapeFrom(shapeKind, shaping.sx, shaping.sy, e.clientX, e.clientY); requestLive(); }
+  function endShape(commit) {
+    if (!shaping) return;
+    const sh = shaping; shaping = null;
+    if (commit && sh.s && Math.hypot(sh.ex - sh.sx, sh.ey - sh.sy) >= 4) {
+      strokes.push(sh.s); pushAction({ type: 'add', s: sh.s }); drawOnBase(sh.s);
+      setTool('pen');   // tras una forma se vuelve al lápiz, para que el siguiente garabato no salga como forma
     }
     requestLive();
   }
-  function distToSeg(px, py, ax, ay, bx, by) {
-    const dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy;
-    let t = l ? ((px - ax) * dx + (py - ay) * dy) / l : 0; t = Math.max(0, Math.min(1, t));
-    return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+
+  // ---------- Goma (borra solo por donde pasa) ----------
+  const eraserPx = () => 4 + width * 1.3;   // el tamaño de la goma sigue al grosor elegido
+  function encodePiece(s, p) {
+    const x0 = p[0][0], y0 = p[0][1], u = s.u, pts = new Int32Array(p.length * 3), bb = [x0, y0, x0, y0];
+    p.forEach(([x, y, pr], i) => {
+      pts[i * 3] = Math.round((x - x0) / u); pts[i * 3 + 1] = Math.round((y - y0) / u); pts[i * 3 + 2] = Math.round(pr);
+      if (x < bb[0]) bb[0] = x; if (y < bb[1]) bb[1] = y; if (x > bb[2]) bb[2] = x; if (y > bb[3]) bb[3] = y;
+    });
+    const o = { c: s.c, w: s.w, pr: s.pr, x0, y0, u, pts, bb }; if (s.k) o.k = s.k; return o;
   }
-  function eraseAt(e) {
-    eraserAt = [e.clientX, e.clientY]; requestLive();
-    const [x, y] = toWorld(e.clientX, e.clientY), r = 12 / view.z; let hit = false;
-    for (let i = strokes.length - 1; i >= 0; i--) {
-      const s = strokes[i], b = s.bb, m = r + s.w;
-      if (x < b[0] - m || x > b[2] + m || y < b[1] - m || y > b[3] + m) continue;
-      const n = s.pts.length / 3;
-      for (let k = 0; k < n; k++) {
-        const d = k ? distToSeg(x, y, PX(s, k - 1), PY(s, k - 1), PX(s, k), PY(s, k)) : Math.hypot(x - PX(s, 0), y - PY(s, 0));
-        if (d <= r + s.w / 2) { erasing.push({ s, i }); strokes.splice(i, 1); hit = true; break; }
+  // Corta un trazo de puntos por el círculo (cx,cy,R). Devuelve null si no lo toca, o los trozos que quedan.
+  function cutPoly(s, cx, cy, R) {
+    const n = s.pts.length / 3, R2 = R * R;
+    const P = i => [PX(s, i), PY(s, i), s.pts[i * 3 + 2]];
+    let a = P(0);
+    if (n === 1) return (a[0] - cx) ** 2 + (a[1] - cy) ** 2 < R2 ? [] : null;
+    const pieces = []; let cur = [], changed = false;
+    if ((a[0] - cx) ** 2 + (a[1] - cy) ** 2 < R2) changed = true; else cur.push(a);
+    for (let i = 1; i < n; i++) {
+      const b = P(i), dx = b[0] - a[0], dy = b[1] - a[1], fx = a[0] - cx, fy = a[1] - cy;
+      const A = dx * dx + dy * dy, B = 2 * (fx * dx + fy * dy), C = fx * fx + fy * fy - R2;
+      let t1 = 2, t2 = -1;
+      if (A > 0) { const disc = B * B - 4 * A * C; if (disc > 0) { const sq = Math.sqrt(disc); t1 = (-B - sq) / (2 * A); t2 = (-B + sq) / (2 * A); } }
+      else if (C < 0) { t1 = -1; t2 = 2; }
+      if (t2 <= 0 || t1 >= 1 || t1 >= t2) cur.push(b);
+      else {
+        changed = true;
+        const lerp = t => [a[0] + dx * t, a[1] + dy * t, a[2] + (b[2] - a[2]) * t];
+        if (t1 > 0) cur.push(lerp(t1));
+        if (cur.length >= 2) pieces.push(cur);
+        cur = t2 < 1 ? [lerp(t2), b] : [];
       }
+      a = b;
     }
-    if (hit) requestFull();
+    if (!changed) return null;
+    if (cur.length >= 2) pieces.push(cur);
+    return pieces.map(p => encodePiece(s, p));
+  }
+  function cutEllipse(s, cx, cy, R) {
+    const ins = ellipseIntervals(s, s.a0, s.a1, cx, cy, R);
+    if (!ins.length) return null;
+    const out = []; let t = s.a0;
+    for (const [a, b] of ins) { if (a > t + 1e-12) out.push([t, a]); t = b; }
+    if (s.a1 > t + 1e-12) out.push([t, s.a1]);
+    // En un círculo completo, el principio y el final son el mismo punto: se unen en un solo arco.
+    if (s.a1 - s.a0 >= TAU - 1e-9 && out.length >= 2 && out[0][0] === s.a0 && out[out.length - 1][1] === s.a1) {
+      const last = out.pop(); out[0] = [last[0], out[0][1] + TAU];
+    }
+    return out.filter(([a, b]) => b - a > 1e-12).map(([a0, a1]) => ({ ...s, a0, a1 }));
+  }
+  function cutAt(sx, sy, Rw) {
+    const [wx, wy] = toWorld(sx, sy);
+    for (let i = strokes.length - 1; i >= 0; i--) {
+      const s = strokes[i], b = s.bb, m = Rw + s.w * (s.pr ? 0.65 : 0.5);
+      if (wx < b[0] - m || wx > b[2] + m || wy < b[1] - m || wy > b[3] + m) continue;
+      const pieces = s.k === 'e' ? cutEllipse(s, wx, wy, m) : cutPoly(s, wx, wy, m);
+      if (pieces) { strokes.splice(i, 1, ...pieces); erasing.changed = true; }
+    }
+  }
+  function startErase(e) {
+    erasing = { id: e.pointerId, ptype: e.pointerType, before: strokes.slice(), changed: false, lx: e.clientX, ly: e.clientY };
+    eraseTo(e.clientX, e.clientY, true);
+  }
+  function eraseTo(x, y, first) {
+    const r = eraserPx(), sx = erasing.lx, sy = erasing.ly;
+    const steps = first ? 0 : Math.ceil(Math.hypot(x - sx, y - sy) / (r * 0.5));
+    for (let k = first ? 0 : 1; k <= steps; k++) { const t = steps ? k / steps : 1; cutAt(sx + (x - sx) * t, sy + (y - sy) * t, r / view.z); }
+    // Respuesta inmediata: se tapa con el color de fondo y, al soltar, se repinta todo con exactitud.
+    if (baseValid && !fullPending) {
+      bctx.setTransform(dpr, 0, 0, dpr, 0, 0); bctx.fillStyle = bctx.strokeStyle = bg;
+      if (first) { bctx.beginPath(); bctx.arc(x, y, r, 0, TAU); bctx.fill(); }
+      else { bctx.lineCap = 'round'; bctx.lineWidth = r * 2; bctx.beginPath(); bctx.moveTo(sx, sy); bctx.lineTo(x, y); bctx.stroke(); }
+    } else requestFull();
+    erasing.lx = x; erasing.ly = y; eraserAt = [x, y]; requestLive();
   }
   function finishErase() {
-    if (erasing && erasing.length) pushAction({ type: 'erase', items: erasing });
-    erasing = null; eraseId = null; eraseType = null; eraserAt = null; requestLive();
+    if (!erasing) return;
+    const er = erasing; erasing = null; eraserAt = null;
+    if (er.changed) pushAction({ type: 'swap', prev: er.before });
+    requestFull(); requestLive();
   }
+
+  // ---------- Entrada ----------
   function zoomAt(px, py, f) {
     if (!isFinite(f) || f <= 0) return;
     const nz = Math.max(ZMIN, Math.min(ZMAX, view.z * f)); if (nz === view.z) return;
@@ -519,18 +693,19 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     const a = t[0][1], b = t[1][1];
     pinch = { ids: [t[0][0], t[1][0]], mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
   }
-  // Si el iPad "se traga" el final de un toque, la app se quedaba esperándolo y dejaba de responder.
-  // Un nuevo toque principal demuestra que los anteriores de ese tipo ya terminaron: se liberan.
+  // Si el iPad "se traga" el final de un toque, se liberan los toques anteriores de ese tipo.
   function dropStale(type) {
     for (const [id, p] of [...pointers]) if (p.type === type) pointers.delete(id);
     if (current && current.ptype === type) endStroke(current.pts.length < 9);
-    if (erasing && eraseType === type) finishErase();
+    if (erasing && erasing.ptype === type) finishErase();
+    if (shaping && shaping.ptype === type) endShape(false);
     if (panId !== null && !pointers.has(panId)) panId = null;
     if (pinch && !pinch.ids.every(id => pointers.has(id))) pinch = null;
   }
   function resetInteraction() {
     if (current) endStroke(current.pts.length < 9);
     if (erasing) finishErase();
+    if (shaping) endShape(false);
     pointers.clear(); pinch = null; panId = null; spaceDown = false;
     cv.classList.toggle('panning', tool === 'hand');
     if (doc && !baseValid) requestFull();
@@ -546,19 +721,25 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     if (e.pointerType === 'touch') {
       if (touchPointers().length >= 2) {
         if (current && current.ptype === 'touch') endStroke(current.pts.length < 30);
-        if (erasing && eraseType === 'touch') finishErase();
+        if (erasing && erasing.ptype === 'touch') finishErase();
+        if (shaping && shaping.ptype === 'touch') endShape(false);
         panId = null; startPinch(); return;
       }
       if (!fingerDraw) { panId = e.pointerId; return; }
     }
     if (tool === 'hand' || spaceDown || e.button === 1 || e.button === 2) { panId = e.pointerId; cv.classList.add('panning'); return; }
-    if (current || erasing) return;
-    if (tool === 'eraser') { erasing = []; eraseId = e.pointerId; eraseType = e.pointerType; eraseAt(e); return; }
+    if (busy()) return;
+    if (tool === 'eraser') { startErase(e); return; }
+    if (tool === 'shape') { startShape(e); return; }
     startStroke(e);
   }, { passive: false });
 
   cv.addEventListener('pointermove', e => {
-    const prev = pointers.get(e.pointerId); if (!prev) return;
+    const prev = pointers.get(e.pointerId);
+    if (!prev) {   // ratón o lápiz sin tocar: solo se muestra el contorno de la goma
+      if (doc && tool === 'eraser' && e.pointerType !== 'touch' && !erasing) { eraserAt = [e.clientX, e.clientY]; requestLive(); }
+      return;
+    }
     e.preventDefault();
     const dx = e.clientX - prev.x, dy = e.clientY - prev.y; prev.x = e.clientX; prev.y = e.clientY;
     if (pinch && pinch.ids.includes(e.pointerId)) {
@@ -569,8 +750,9 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
       pinch.mx = mx; pinch.my = my; pinch.d = d; viewChanged(); return;
     }
     if (panId === e.pointerId) { view.ox += dx; view.oy += dy; viewChanged(); return; }
-    if (currentId === e.pointerId && current) extendStroke(e);
-    else if (eraseId === e.pointerId && erasing) eraseAt(e);
+    if (current && currentId === e.pointerId) extendStroke(e);
+    else if (erasing && erasing.id === e.pointerId) eraseTo(e.clientX, e.clientY, false);
+    else if (shaping && shaping.id === e.pointerId) moveShape(e);
   }, { passive: false });
 
   function pointerEnd(e) {
@@ -578,13 +760,15 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     pointers.delete(e.pointerId);
     if (pinch && pinch.ids.includes(e.pointerId)) { pinch = null; startPinch(); }
     if (panId === e.pointerId) { panId = null; cv.classList.toggle('panning', tool === 'hand'); }
-    if (currentId === e.pointerId) endStroke(e.type === 'pointercancel' && current && current.pts.length < 9);
-    if (eraseId === e.pointerId) finishErase();
+    if (current && currentId === e.pointerId) endStroke(e.type === 'pointercancel' && current.pts.length < 9);
+    if (erasing && erasing.id === e.pointerId) finishErase();
+    if (shaping && shaping.id === e.pointerId) endShape(e.type === 'pointerup');
     if (!pinch && panId === null && !baseValid) { clearTimeout(settleT); requestFull(); }
   }
   cv.addEventListener('pointerup', pointerEnd);
   cv.addEventListener('pointercancel', pointerEnd);
   cv.addEventListener('lostpointercapture', pointerEnd);
+  cv.addEventListener('pointerleave', e => { if (!pointers.has(e.pointerId) && eraserAt && !erasing) { eraserAt = null; requestLive(); } });
   cv.addEventListener('contextmenu', e => e.preventDefault());
   cv.addEventListener('wheel', e => {
     if (!doc) return; e.preventDefault();
@@ -592,7 +776,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     else { view.ox -= e.deltaX; view.oy -= e.deltaY; }
     viewChanged();
   }, { passive: false });
-  // Evita el zoom de toda la página (pellizco o doble toque) que descuadra el trazo respecto al dedo.
+  // Evita el zoom de toda la página (pellizco o doble toque), que descuadra el trazo respecto al dedo.
   ['gesturestart', 'gesturechange', 'gestureend'].forEach(t => document.addEventListener(t, e => e.preventDefault()));
   document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
   let lastTouchEnd = 0;
@@ -605,12 +789,21 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   // ---------- Barra y paneles ----------
   const toolBtns = [...document.querySelectorAll('[data-tool]')], widthBtns = [...document.querySelectorAll('[data-width]')];
   const fingerBtn = $('finger'), zoomBtn = $('zoom');
-  const colorBtn = $('colorBtn'), bgBtn = $('bgBtn'), saveBtn = $('saveBtn');
-  const colorPanel = $('colorPanel'), bgPanel = $('bgPanel'), savePanel = $('savePanel');
-  const panels = [[colorPanel, colorBtn], [bgPanel, bgBtn], [savePanel, saveBtn]];
+  const colorBtn = $('colorBtn'), bgBtn = $('bgBtn'), saveBtn = $('saveBtn'), shapeBtn = $('shapeBtn');
+  const colorPanel = $('colorPanel'), bgPanel = $('bgPanel'), savePanel = $('savePanel'), shapePanel = $('shapePanel');
+  const panels = [[colorPanel, colorBtn], [bgPanel, bgBtn], [savePanel, saveBtn], [shapePanel, shapeBtn]];
   const inkGrid = $('inkGrid'), bgGrid = $('bgGrid'), gridToggle = $('gridToggle');
+  const shapeOpts = [...document.querySelectorAll('[data-shape]')];
 
-  function setTool(t) { tool = t; toolBtns.forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === t)); cv.classList.toggle('panning', t === 'hand'); }
+  function setTool(t) {
+    tool = t;
+    toolBtns.forEach(b => b.setAttribute('aria-pressed', b.dataset.tool === t));
+    shapeBtn.setAttribute('aria-pressed', t === 'shape');
+    shapeOpts.forEach(b => b.setAttribute('aria-pressed', t === 'shape' && b.dataset.shape === shapeKind));
+    $('shapeIcon').innerHTML = SHAPE_ICONS[shapeKind];
+    cv.classList.toggle('panning', t === 'hand');
+    if (t !== 'eraser' && eraserAt && !erasing) { eraserAt = null; requestLive(); }
+  }
   function setFinger(v) { fingerDraw = v; fingerBtn.setAttribute('aria-pressed', v); savePrefs(); }
   function closePanels() { panels.forEach(([p, b]) => { p.classList.remove('open'); b.setAttribute('aria-expanded', 'false'); }); }
   function togglePanel(panel, btn) { const open = !panel.classList.contains('open'); closePanels(); if (open) { panel.classList.add('open'); btn.setAttribute('aria-expanded', 'true'); } }
@@ -621,7 +814,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     gridToggle.setAttribute('aria-pressed', showGrid); gridToggle.textContent = showGrid ? 'Visibles' : 'Ocultos';
     document.body.style.background = doc ? bg : '';
   }
-  function setColor(c) { color = c; if (tool !== 'pen') setTool('pen'); updateSwatches(); }
+  function setColor(c) { color = c; if (tool === 'eraser' || tool === 'hand') setTool('pen'); updateSwatches(); }
   function setBg(c) { if (c === bg) return; pushAction({ type: 'bg', prev: bg }); bg = c; updateSwatches(); requestFull(); }
 
   INKS.forEach(c => { const b = document.createElement('button'); b.dataset.c = c; b.style.setProperty('--c', c); b.setAttribute('aria-label', 'Color ' + c);
@@ -634,15 +827,17 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   colorBtn.onclick = () => togglePanel(colorPanel, colorBtn);
   bgBtn.onclick = () => togglePanel(bgPanel, bgBtn);
   saveBtn.onclick = () => togglePanel(savePanel, saveBtn);
+  shapeBtn.onclick = () => togglePanel(shapePanel, shapeBtn);
+  shapeOpts.forEach(b => b.onclick = () => { shapeKind = b.dataset.shape; setTool('shape'); closePanels(); });
   toolBtns.forEach(b => b.onclick = () => { setTool(b.dataset.tool); closePanels(); });
-  widthBtns.forEach(b => b.onclick = () => { width = +b.dataset.width; widthBtns.forEach(x => x.setAttribute('aria-pressed', x === b)); if (tool !== 'pen') setTool('pen'); closePanels(); });
+  widthBtns.forEach(b => b.onclick = () => { width = +b.dataset.width; widthBtns.forEach(x => x.setAttribute('aria-pressed', x === b)); if (tool === 'hand') setTool('pen'); closePanels(); });
   fingerBtn.onclick = () => setFinger(!fingerDraw);
   zoomBtn.onclick = () => { view = { ox: W / 2, oy: H / 2, z: 1 }; markViewDirty(); renderBase(); };
   $('clear').onclick = () => {
     resetInteraction();
     if (!strokes.length) return;
     if (!confirm('¿Borrar todo este dibujo? Puedes recuperarlo con Deshacer mientras no salgas.')) return;
-    pushAction({ type: 'clear', prev: strokes }); strokes = []; requestFull();
+    pushAction({ type: 'swap', prev: strokes }); strokes = []; requestFull();
   };
   // Salir nunca espera más de dos segundos: el guardado sigue en segundo plano.
   $('backBtn').onclick = async () => {
@@ -683,7 +878,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     const scale = Math.max(dpr, Math.min(3, 4096 / Math.max(W, H)));
     const c = document.createElement('canvas'); c.width = Math.round(W * scale); c.height = Math.round(H * scale);
     paintScene(c.getContext('2d'), W, H, scale, view, false, strokes);
-    const blob = dataURLtoBlob(c.toDataURL('image/png')); c.width = c.height = 0;   // libera la memoria del iPad
+    const blob = dataURLtoBlob(c.toDataURL('image/png')); c.width = c.height = 0;
     deliver(blob, slug(doc.name) + '-' + today() + '.png');
   };
   $('saveBackup').onclick = () => {
@@ -699,9 +894,15 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     if (d.view && !validView(d.view)) return false;
     for (const s of d.strokes) {
       if (!s || typeof s.c !== 'string' || !/^#[0-9a-f]{6}$/i.test(s.c)) return false;
-      if (!fin(s.w) || s.w <= 0 || !fin(s.x0) || !fin(s.y0) || !fin(s.u) || s.u <= 0) return false;
-      if (!Array.isArray(s.pts) || !s.pts.length || s.pts.length % 3 || !s.pts.every(fin)) return false;
+      if (!fin(s.w) || s.w <= 0) return false;
       if (!Array.isArray(s.bb) || s.bb.length !== 4 || !s.bb.every(fin)) return false;
+      if (s.k === 'e') {
+        if (![s.cx, s.cy, s.rx, s.ry, s.a0, s.a1].every(fin) || s.rx < 0 || s.ry < 0 || !(s.a1 > s.a0) || s.a1 - s.a0 > TAU + 1e-6) return false;
+        s.pr = false; continue;
+      }
+      if (s.k !== undefined && s.k !== 'l') return false;
+      if (!fin(s.x0) || !fin(s.y0) || !fin(s.u) || s.u <= 0) return false;
+      if (!Array.isArray(s.pts) || !s.pts.length || s.pts.length % 3 || !s.pts.every(fin)) return false;
       s.pr = !!s.pr; s.pts = Int32Array.from(s.pts);
     }
     return true;
@@ -724,12 +925,12 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
   }
 
   async function showGallery() {
-    doc = null; strokes = []; current = null; erasing = null; baseView = null; baseValid = false;
+    doc = null; strokes = []; current = null; erasing = null; shaping = null; eraserAt = null; baseView = null; baseValid = false;
     base.style.transform = ''; document.body.style.background = '';
     gallery.hidden = false; renderFoot();
     let list = [];
     try { list = await store.list(); } catch (e) { logError('listar: ' + e.message); flash('No se han podido cargar los dibujos. Cierra la app y vuelve a abrirla.', 6000); }
-    if (doc) return;   // se abrió un dibujo mientras tanto
+    if (doc) return;
     list.sort((a, b) => b.updated - a.updated);
     cards.textContent = '';
     empty.hidden = list.length > 0;
@@ -801,7 +1002,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     view = validView(v) ? { ox: v.ox, oy: v.oy, z: v.z } : { ox: W / 2, oy: H / 2, z: 1 };
     bg = data.bg || '#F4F5F2'; showGrid = data.showGrid !== false;
     undoStack.length = 0; redoStack.length = 0; syncHistory();
-    current = null; erasing = null; pointers.clear(); pinch = null; panId = null;
+    current = null; erasing = null; shaping = null; eraserAt = null; pointers.clear(); pinch = null; panId = null;
     strokesDirty = false; viewDirty = false;
     setTool('pen'); setFinger(fingerDraw); updateSwatches(); closePanels();
     gallery.hidden = true; resize();
@@ -814,7 +1015,7 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     if (!f) return;
     if (f.size > 60 * 1024 * 1024) { flash('Ese archivo es demasiado grande.'); return; }
     let d; try { d = JSON.parse(await f.text()); } catch (err) { d = null; }
-    if (!validBackup(d)) { flash('Ese archivo no es una copia de Lienzo infinito.'); return; }
+    if (!validBackup(d)) { flash('Ese archivo no es una copia de Lienzo infinito, o es de una versión más nueva de la app.'); return; }
     const now = Date.now();
     const name = (typeof d.name === 'string' && d.name.trim() ? d.name.trim().slice(0, 50) : 'Dibujo') + ' (copia)';
     startEditing({ id: newId(), name, created: now, updated: now, thumb: null },
@@ -828,20 +1029,21 @@ svg.i{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stro
     if (!doc || e.target.tagName === 'INPUT') return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') { e.preventDefault(); redo(); return; }
+    if (e.ctrlKey || e.metaKey) return;
     if (e.code === 'Space' && !spaceDown) { spaceDown = true; cv.classList.add('panning'); e.preventDefault(); }
     const k = e.key.toLowerCase();
     if (k === 'p') setTool('pen'); else if (k === 'e') setTool('eraser'); else if (k === 'h') setTool('hand');
+    else if (k === 'l' || k === 'r' || k === 'o') { shapeKind = { l: 'line', r: 'rect', o: 'ellipse' }[k]; setTool('shape'); }
   });
   window.addEventListener('keyup', e => { if (e.code === 'Space') { spaceDown = false; cv.classList.toggle('panning', tool === 'hand'); } });
   window.addEventListener('resize', resize);
-  // Al salir de la app o cambiar de app, se cierra cualquier gesto a medias y se guarda.
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') { resetInteraction(); flushSave(); } });
   window.addEventListener('pagehide', () => { resetInteraction(); flushSave(); });
   window.addEventListener('blur', () => { if (doc) resetInteraction(); });
 
   if (!store.persistent) flash('Este navegador no permite guardar: los dibujos se perderán al cerrar.', 6000);
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(() => {});
-  resize(); showGallery();
+  setTool('pen'); resize(); showGallery();
 })();
 </script>
 </body>

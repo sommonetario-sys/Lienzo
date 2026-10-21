@@ -1,5 +1,5 @@
 // Permite usar la app sin conexión. Cambia VERSION al subir una versión nueva.
-const VERSION = 'lienzo-v4';
+const VERSION = 'lienzo-v5';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
